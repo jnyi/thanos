@@ -891,7 +891,7 @@ func (h *Handler) sendRemoteWrite(
 
 // writeQuorum returns minimum number of replicas that has to confirm write success before claiming replication success.
 func (h *Handler) writeQuorum() int {
-	return int((h.options.ReplicationFactor / 2) + 1)
+	return int((h.options.ReplicationFactor + 1) / 2)
 }
 
 func quorumReached(successes []int, successThreshold int) bool {
