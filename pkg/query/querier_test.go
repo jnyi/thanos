@@ -478,7 +478,7 @@ func TestQuerier_Select(t *testing.T) {
 			expectedAfterDedup: []series{{
 				lset: nil,
 				// We don't expect correctness here, it's just random non-replica data.
-				samples: []sample{{1, 1}, {2, 2}, {3, 3}, {5, 5}, {6, 6}, {7, 7}},
+				samples: []sample{{1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}, {6, 6}, {7, 7}},
 			}},
 			expectedWarning: "partial error",
 		},
