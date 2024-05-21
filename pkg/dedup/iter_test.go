@@ -379,19 +379,19 @@ func TestDedupSeriesSet(t *testing.T) {
 			input: []series{
 				{
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {4, 4}},
+					samples: []sample{{10000, 1}, {40000, 4}},
 				}, {
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {2, 2}, {3, 3}, {5, 5}},
+					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {40000, 4}, {50000, 5}},
 				}, {
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {8, 10}},
+					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {40000, 4}, {50000, 5}},
 				},
 			},
 			exp: []series{
 				{
 					lset:    labels.Labels{{Name: "a", Value: "5"}, {Name: "c", Value: "6"}},
-					samples: []sample{{1, 1}, {2, 2}, {3, 3}, {4, 4}},
+					samples: []sample{{10000, 1}, {20000, 2}, {30000, 3}, {40000, 4}, {50000, 5}},
 				},
 			},
 		},
