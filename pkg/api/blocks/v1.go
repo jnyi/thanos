@@ -116,10 +116,12 @@ func (bapi *BlocksAPI) markBlock(r *http.Request) (interface{}, []error, *api.Ap
 	actionType := parse(actionParam)
 	switch actionType {
 	case Deletion:
-		err := block.MarkForDeletion(r.Context(), bapi.logger, bapi.bkt, id, detailParam, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
-		if err != nil {
-			return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
-		}
+		// TODO: if we can figure out a better admin access control, we can re-enable this.
+		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: errors.New("Deletion Admin operations are disabled by default")}, func() {}
+		//err := block.MarkForDeletion(r.Context(), bapi.logger, bapi.bkt, id, detailParam, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
+		//if err != nil {
+		//	return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
+		//}
 	case NoCompaction:
 		err := block.MarkForNoCompact(r.Context(), bapi.logger, bapi.bkt, id, metadata.ManualNoCompactReason, detailParam, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
 		if err != nil {
