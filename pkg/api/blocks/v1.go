@@ -93,9 +93,6 @@ func (bapi *BlocksAPI) Register(r *route.Router, tracer opentracing.Tracer, logg
 }
 
 func (bapi *BlocksAPI) markBlock(r *http.Request) (interface{}, []error, *api.ApiError, func()) {
-	if bapi.disableAdminOperations {
-		return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: errors.New("Admin operations are disabled")}, func() {}
-	}
 	idParam := r.FormValue("id")
 	actionParam := r.FormValue("action")
 	detailParam := r.FormValue("detail")
@@ -116,6 +113,9 @@ func (bapi *BlocksAPI) markBlock(r *http.Request) (interface{}, []error, *api.Ap
 	actionType := parse(actionParam)
 	switch actionType {
 	case Deletion:
+		if bapi.disableAdminOperations {
+			return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: errors.New("Only Deletion Admin operations are disabled")}, func() {}
+		}
 		err := block.MarkForDeletion(r.Context(), bapi.logger, bapi.bkt, id, detailParam, promauto.With(nil).NewCounter(prometheus.CounterOpts{}))
 		if err != nil {
 			return nil, nil, &api.ApiError{Typ: api.ErrorBadData, Err: err}, func() {}
