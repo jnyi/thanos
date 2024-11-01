@@ -6,7 +6,7 @@
 
 > 📢 [ThanosCon](https://events.linuxfoundation.org/kubecon-cloudnativecon-europe/co-located-events/thanoscon/) happened on 19th March 2024 as a co-located half-day on KubeCon EU in Paris.
 
-## Overview
+## Overview - Databricks Fork
 
 Thanos is a set of components that can be composed into a highly available metric system with unlimited storage capacity, which can be added seamlessly on top of existing Prometheus deployments.
 
