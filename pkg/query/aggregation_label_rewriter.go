@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	aggregationLabelName = "__rollup__"
+	aggregationLabelName = "__agg_rule_type__"
 )
 
 type AggregationLabelRewriter struct {
@@ -128,7 +128,7 @@ func (a *AggregationLabelRewriter) Rewrite(ms []*labels.Matcher) []*labels.Match
 	if needsRewrite {
 		newMatcher := &labels.Matcher{
 			Name:  aggregationLabelName,
-			Type:  labels.MatchEqual,
+			Type:  labels.MatchRegexp,
 			Value: a.desiredLabelValue,
 		}
 		if aggregationLabelMatcher != nil {

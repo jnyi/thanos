@@ -41,20 +41,33 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 			},
 			expectedMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
-				labels.MustNewMatcher(labels.MatchEqual, "__rollup__", "5m"),
+				labels.MustNewMatcher(labels.MatchRegexp, aggregationLabelName, "5m"),
 			},
 			expectedAddCount: 1,
 		},
 		{
-			name:              "should rewrite existing aggregation label for aggregated metric",
+			name:              "should rewrite existing equal aggregation label for aggregated metric",
 			desiredLabelValue: "5m",
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
-				labels.MustNewMatcher(labels.MatchEqual, "__rollup__", "1h"),
+				labels.MustNewMatcher(labels.MatchEqual, aggregationLabelName, "1h"),
 			},
 			expectedMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
-				labels.MustNewMatcher(labels.MatchEqual, "__rollup__", "5m"),
+				labels.MustNewMatcher(labels.MatchRegexp, aggregationLabelName, "5m"),
+			},
+			expectedRewriteMap: map[string]float64{"1h": 1},
+		},
+		{
+			name:              "should rewrite existing regex aggregation label for aggregated metric",
+			desiredLabelValue: "5m",
+			inputMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+				labels.MustNewMatcher(labels.MatchRegexp, aggregationLabelName, "1h"),
+			},
+			expectedMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+				labels.MustNewMatcher(labels.MatchRegexp, aggregationLabelName, "5m"),
 			},
 			expectedRewriteMap: map[string]float64{"1h": 1},
 		},
