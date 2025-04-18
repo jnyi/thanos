@@ -11,12 +11,17 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
+const (
+	aggregationLabelName = "__agg_rule_type__"
+)
+
 func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		name               string
 		desiredLabelValue  string // Empty means disabled
+		insertOnly         bool
 		inputMatchers      []*labels.Matcher
 		expectedMatchers   []*labels.Matcher
 		expectedSkipCount  float64
@@ -104,13 +109,29 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 			},
 			expectedSkipCount: 1,
 		},
+		{
+			name:              "if insert only, should NOT rewrite existing aggregation label for aggregated metric",
+			desiredLabelValue: "5m",
+			insertOnly:        true,
+			inputMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+				labels.MustNewMatcher(labels.MatchEqual, aggregationLabelName, "1h"),
+			},
+			expectedMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+				labels.MustNewMatcher(labels.MatchEqual, aggregationLabelName, "1h"),
+			},
+			expectedSkipCount: 1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
 			rewriter := NewAggregationLabelRewriter(
 				nil,
 				reg,
+				aggregationLabelName,
 				tc.desiredLabelValue,
+				tc.insertOnly,
 			)
 
 			result := rewriter.Rewrite(tc.inputMatchers)

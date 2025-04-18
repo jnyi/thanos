@@ -14,15 +14,13 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-const (
-	aggregationLabelName = "__agg_rule_type__"
-)
-
 type AggregationLabelRewriter struct {
 	logger  log.Logger
 	metrics *aggregationLabelRewriterMetrics
 
 	enabled           bool
+	insertOnly        bool
+	labelKey          string
 	desiredLabelValue string
 }
 
@@ -74,7 +72,7 @@ func NewNopAggregationLabelRewriter() *AggregationLabelRewriter {
 	}
 }
 
-func NewAggregationLabelRewriter(logger log.Logger, reg prometheus.Registerer, desiredLabelValue string) *AggregationLabelRewriter {
+func NewAggregationLabelRewriter(logger log.Logger, reg prometheus.Registerer, labelKey string, desiredLabelValue string, insertOnly bool) *AggregationLabelRewriter {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
@@ -82,6 +80,8 @@ func NewAggregationLabelRewriter(logger log.Logger, reg prometheus.Registerer, d
 		enabled:           desiredLabelValue != "",
 		logger:            logger,
 		metrics:           newAggregationLabelRewriterMetrics(reg, desiredLabelValue),
+		insertOnly:        insertOnly,
+		labelKey:          labelKey,
 		desiredLabelValue: desiredLabelValue,
 	}
 }
@@ -118,16 +118,22 @@ func (a *AggregationLabelRewriter) Rewrite(ms []*labels.Matcher) []*labels.Match
 				break
 			}
 			// In any case, if we see an aggregation label, we store that for later use
-		} else if m.Name == aggregationLabelName {
+		} else if m.Name == a.labelKey {
 			aggregationLabelMatcher = m
 			aggregationLabelIndex = i
 		}
 	}
+
+	if aggregationLabelMatcher != nil && a.insertOnly {
+		needsRewrite = false
+		skipReason = "insert-only"
+	}
+
 	// After the for loop, if needsRewrite is false, no need to do anything
 	// but if it is true, we either append or modify an aggregation label
 	if needsRewrite {
 		newMatcher := &labels.Matcher{
-			Name:  aggregationLabelName,
+			Name:  a.labelKey,
 			Type:  labels.MatchRegexp,
 			Value: a.desiredLabelValue,
 		}

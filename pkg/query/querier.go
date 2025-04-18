@@ -61,7 +61,9 @@ type QueryableCreator func(
 type Options struct {
 	GroupReplicaPartialResponseStrategy bool
 	DeduplicationFunc                   string
+	RewriteAggregationLabelName         string
 	RewriteAggregationLabelTo           string
+	RewriteAggregationInsertOnly        bool
 }
 
 // NewQueryableCreator creates QueryableCreator.
@@ -94,7 +96,9 @@ func NewQueryableCreatorWithOptions(
 	aggregationLabelRewriter := NewAggregationLabelRewriter(
 		logger,
 		extprom.WrapRegistererWithPrefix("aggregation_label_rewriter_", reg),
+		opts.RewriteAggregationLabelName,
 		opts.RewriteAggregationLabelTo,
+		opts.RewriteAggregationInsertOnly,
 	)
 	return func(
 		deduplicate bool,
