@@ -558,13 +558,13 @@ func newAsyncRespSet(
 func (l *lazyRespSet) Close() {
 	l.bufferedResponsesMtx.Lock()
 	defer l.bufferedResponsesMtx.Unlock()
+	_ = l.cl.CloseSend()
 
 	l.closeSeries()
 	l.noMoreData = true
 	l.dataOrFinishEvent.Signal()
 
 	l.shardMatcher.Close()
-	_ = l.cl.CloseSend()
 }
 
 // eagerRespSet is a SeriesSet that blocks until all data is retrieved from
@@ -750,11 +750,11 @@ func sortWithoutLabels(set []*storepb.SeriesResponse, labelsToRemove map[string]
 }
 
 func (l *eagerRespSet) Close() {
+	_ = l.cl.CloseSend()
 	if l.closeSeries != nil {
 		l.closeSeries()
 	}
 	l.shardMatcher.Close()
-	_ = l.cl.CloseSend()
 }
 
 func (l *eagerRespSet) At() *storepb.SeriesResponse {
