@@ -53,8 +53,8 @@ func newInProcessClient(ctx context.Context, next func() (*SeriesResponse, error
 
 func (c *inProcessClient) Recv() (*SeriesResponse, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	resp, err, ok := c.next()
-	c.mu.Unlock()
 	if err != nil {
 		c.stop()
 		return nil, err
@@ -74,8 +74,8 @@ func (c *inProcessClient) Context() context.Context {
 
 func (c *inProcessClient) CloseSend() error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.stop()
-	c.mu.Unlock()
 	return nil
 }
 
