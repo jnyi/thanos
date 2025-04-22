@@ -11,17 +11,13 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-const (
-	aggregationLabelName = "__agg_rule_type__"
-)
-
 func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		name               string
 		desiredLabelValue  string // Empty means disabled
-		insertOnly         bool
+		strategy           RewriterStrategy
 		inputMatchers      []*labels.Matcher
 		expectedMatchers   []*labels.Matcher
 		expectedSkipCount  float64
@@ -30,7 +26,19 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 	}{
 		{
 			name:              "disabled rewriter should not modify label matchers",
+			desiredLabelValue: "v1",
+			strategy:          NoopLabelRewriter,
+			inputMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+			},
+			expectedMatchers: []*labels.Matcher{
+				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
+			},
+		},
+		{
+			name:              "no desired label value makes a disabled rewriter and should not modify label matchers",
 			desiredLabelValue: "",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
 			},
@@ -41,6 +49,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should add label for aggregated metric if no existing aggregation label",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
 			},
@@ -53,6 +62,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should rewrite existing equal aggregation label for aggregated metric",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
 				labels.MustNewMatcher(labels.MatchEqual, aggregationLabelName, "1h"),
@@ -66,6 +76,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should rewrite existing regex aggregation label for aggregated metric",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
 				labels.MustNewMatcher(labels.MatchRegexp, aggregationLabelName, "1h"),
@@ -79,6 +90,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should skip non-aggregated metric",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric"),
 			},
@@ -90,6 +102,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should skip non-equal name matcher",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test:sum"),
 			},
@@ -101,6 +114,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "should skip when no name matcher",
 			desiredLabelValue: "5m",
+			strategy:          UpsertLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "job", "prometheus"),
 			},
@@ -112,7 +126,7 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 		{
 			name:              "if insert only, should NOT rewrite existing aggregation label for aggregated metric",
 			desiredLabelValue: "5m",
-			insertOnly:        true,
+			strategy:          InsertOnlyLabelRewriter,
 			inputMatchers: []*labels.Matcher{
 				labels.MustNewMatcher(labels.MatchEqual, "__name__", "test:sum"),
 				labels.MustNewMatcher(labels.MatchEqual, aggregationLabelName, "1h"),
@@ -129,9 +143,8 @@ func TestAggregationLabelRewriter_Rewrite(t *testing.T) {
 			rewriter := NewAggregationLabelRewriter(
 				nil,
 				reg,
-				aggregationLabelName,
+				tc.strategy,
 				tc.desiredLabelValue,
-				tc.insertOnly,
 			)
 
 			result := rewriter.Rewrite(tc.inputMatchers)

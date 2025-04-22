@@ -14,13 +14,26 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-type AggregationLabelRewriter struct {
-	logger  log.Logger
-	metrics *aggregationLabelRewriterMetrics
+// RewriterStrategy defines the strategy used by the AggregationLabelRewriter.
+type RewriterStrategy string
 
-	enabled           bool
-	insertOnly        bool
-	labelKey          string
+const (
+	// NoopLabelRewriter is a no-op strategy that basically disables the rewriter.
+	NoopLabelRewriter RewriterStrategy = "noop"
+	// UpsertLabelRewriter is a strategy that upserts the aggregation label.
+	UpsertLabelRewriter RewriterStrategy = "upsert"
+	// InsertOnlyLabelRewriter is a strategy that only inserts the aggregation label if it does not exist.
+	InsertOnlyLabelRewriter RewriterStrategy = "insert-only"
+)
+
+const (
+	aggregationLabelName = "__agg_rule_type__"
+)
+
+type AggregationLabelRewriter struct {
+	logger            log.Logger
+	metrics           *aggregationLabelRewriterMetrics
+	strategy          RewriterStrategy
 	desiredLabelValue string
 }
 
@@ -68,26 +81,27 @@ func newAggregationLabelRewriterMetrics(reg prometheus.Registerer, desiredLabelV
 
 func NewNopAggregationLabelRewriter() *AggregationLabelRewriter {
 	return &AggregationLabelRewriter{
-		enabled: false,
+		strategy: NoopLabelRewriter,
 	}
 }
 
-func NewAggregationLabelRewriter(logger log.Logger, reg prometheus.Registerer, labelKey string, desiredLabelValue string, insertOnly bool) *AggregationLabelRewriter {
+func NewAggregationLabelRewriter(logger log.Logger, reg prometheus.Registerer, strategy RewriterStrategy, desiredLabelValue string) *AggregationLabelRewriter {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
+	if desiredLabelValue == "" {
+		strategy = NoopLabelRewriter
+	}
 	return &AggregationLabelRewriter{
-		enabled:           desiredLabelValue != "" && labelKey != "",
+		strategy:          strategy,
 		logger:            logger,
 		metrics:           newAggregationLabelRewriterMetrics(reg, desiredLabelValue),
-		insertOnly:        insertOnly,
-		labelKey:          labelKey,
 		desiredLabelValue: desiredLabelValue,
 	}
 }
 
 func (a *AggregationLabelRewriter) Rewrite(ms []*labels.Matcher) []*labels.Matcher {
-	if !a.enabled {
+	if a.strategy == NoopLabelRewriter {
 		return ms
 	}
 
@@ -118,13 +132,13 @@ func (a *AggregationLabelRewriter) Rewrite(ms []*labels.Matcher) []*labels.Match
 				break
 			}
 			// In any case, if we see an aggregation label, we store that for later use
-		} else if m.Name == a.labelKey {
+		} else if m.Name == aggregationLabelName {
 			aggregationLabelMatcher = m
 			aggregationLabelIndex = i
 		}
 	}
 
-	if aggregationLabelMatcher != nil && a.insertOnly {
+	if aggregationLabelMatcher != nil && a.strategy == InsertOnlyLabelRewriter {
 		needsRewrite = false
 		skipReason = "insert-only"
 	}
@@ -133,7 +147,7 @@ func (a *AggregationLabelRewriter) Rewrite(ms []*labels.Matcher) []*labels.Match
 	// but if it is true, we either append or modify an aggregation label
 	if needsRewrite {
 		newMatcher := &labels.Matcher{
-			Name:  a.labelKey,
+			Name:  aggregationLabelName,
 			Type:  labels.MatchRegexp,
 			Value: a.desiredLabelValue,
 		}

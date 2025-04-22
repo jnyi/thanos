@@ -245,9 +245,8 @@ func registerQuery(app *extkingpin.App) {
 	enforceTenancy := cmd.Flag("query.enforce-tenancy", "Enforce tenancy on Query APIs. Responses are returned only if the label value of the configured tenant-label-name and the value of the tenant header matches.").Default("false").Bool()
 	tenantLabel := cmd.Flag("query.tenant-label-name", "Label name to use when enforcing tenancy (if --query.enforce-tenancy is enabled).").Default(tenancy.DefaultTenantLabel).String()
 
-	rewriteAggregationLabelName := cmd.Flag("query.aggregation-label-name", "The name for aggregation label. See query.aggregation-label-value-override for details. Default is empty.").Default("").String()
-	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for aggregation label. If set to x, all queries on aggregated metrics will have a `rewriteAggregationLabelName=x` matcher. Leave either flag empty to disable this behavior. Default is empty.").Default("").String()
-	rewriteAggregationInsertOnly := cmd.Flag("query.aggregation-label-insert-only", "If enabled, the above rewriter only insert missing rewriteAggregationLabelName=x and does not modify existing aggregation labels if any. Default is false.").Default("false").Bool()
+	rewriteAggregationLabelStrategy := cmd.Flag("query.aggregation-label-strategy", "The strategy to use when rewriting aggregation labels. Used during aggregator migration only.").Default(string(query.NoopLabelRewriter)).Hidden().Enum(string(query.NoopLabelRewriter), string(query.UpsertLabelRewriter), string(query.InsertOnlyLabelRewriter))
+	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for aggregation label. If set to x, all queries on aggregated metrics will have a `__agg_rule_type__=x` matcher. If empty, this behavior is disabled. Default is empty.").Hidden().Default("").String()
 
 	var storeRateLimits store.SeriesSelectLimits
 	storeRateLimits.RegisterFlags(cmd)
@@ -388,9 +387,8 @@ func registerQuery(app *extkingpin.App) {
 			*enforceTenancy,
 			*tenantLabel,
 			*enableGroupReplicaPartialStrategy,
-			*rewriteAggregationLabelName,
+			*rewriteAggregationLabelStrategy,
 			*rewriteAggregationLabelTo,
-			*rewriteAggregationInsertOnly,
 		)
 	})
 }
@@ -475,9 +473,8 @@ func runQuery(
 	enforceTenancy bool,
 	tenantLabel string,
 	groupReplicaPartialResponseStrategy bool,
-	rewriteAggregationLabelName string,
+	rewriteAggregationLabelStrategy string,
 	rewriteAggregationLabelTo string,
-	rewriteAggregationInsertOnly bool,
 ) error {
 	comp := component.Query
 	if alertQueryURL == "" {
@@ -607,8 +604,7 @@ func runQuery(
 	opts := query.Options{
 		GroupReplicaPartialResponseStrategy: groupReplicaPartialResponseStrategy,
 		DeduplicationFunc:                   queryDeduplicationFunc,
-		RewriteAggregationInsertOnly:        rewriteAggregationInsertOnly,
-		RewriteAggregationLabelName:         rewriteAggregationLabelName,
+		RewriteAggregationLabelStrategy:     rewriteAggregationLabelStrategy,
 		RewriteAggregationLabelTo:           rewriteAggregationLabelTo,
 	}
 	level.Info(logger).Log("msg", "databricks querier features", "opts", fmt.Sprintf("%+v", opts))
