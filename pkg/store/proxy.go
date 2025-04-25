@@ -93,14 +93,15 @@ type ProxyStore struct {
 	selectorLabels labels.Labels
 	buffers        sync.Pool
 
-	responseTimeout   time.Duration
-	metrics           *proxyStoreMetrics
-	retrievalStrategy RetrievalStrategy
-	debugLogging      bool
-	tsdbSelector      *TSDBSelector
-	quorumChunkDedup  bool
-	enableDedup       bool
-	matcherConverter  *storepb.MatcherConverter
+	responseTimeout         time.Duration
+	metrics                 *proxyStoreMetrics
+	retrievalStrategy       RetrievalStrategy
+	debugLogging            bool
+	tsdbSelector            *TSDBSelector
+	quorumChunkDedup        bool
+	enableDedup             bool
+	matcherConverter        *storepb.MatcherConverter
+	lazyRetrievalBufferSize int
 }
 
 type proxyStoreMetrics struct {
@@ -136,6 +137,12 @@ func RegisterStoreServer(storeSrv storepb.StoreServer, logger log.Logger) func(*
 
 // BucketStoreOption are functions that configure BucketStore.
 type ProxyStoreOption func(s *ProxyStore)
+
+func WithLazyRetrievalBufferSize(buferSize int) ProxyStoreOption {
+	return func(s *ProxyStore) {
+		s.lazyRetrievalBufferSize = buferSize
+	}
+}
 
 // WithProxyStoreDebugLogging toggles debug logging.
 func WithProxyStoreDebugLogging(enable bool) ProxyStoreOption {
@@ -385,11 +392,16 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 	defer logGroupReplicaErrors()
-
+	lazyRetrievalBufferSize := s.lazyRetrievalBufferSize
+	if lazyRetrievalBufferSize <= 0 {
+		// Use 1 as default value for lazy retrieval buffer size.
+		// Unit tests hit this path so that corner cases can be tested with buffer size 1.
+		lazyRetrievalBufferSize = 1
+	}
 	for _, st := range stores {
 		st := st
 
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses)
+		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, lazyRetrievalBufferSize)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()
