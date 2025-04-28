@@ -622,7 +622,7 @@ func NewBucketStore(
 		enableChunkHashCalculation:      enableChunkHashCalculation,
 		seriesBatchSize:                 SeriesBatchSize,
 		sortingStrategy:                 sortingStrategyStore,
-		lazyRetrievalMaxBufferedResponses: 10,
+		lazyRetrievalMaxBufferedResponses: 1,
 		indexHeaderLazyDownloadStrategy: indexheader.AlwaysEagerDownloadIndexHeader,
 		requestLoggerFunc:               NoopRequestLoggerFunc,
 	}
@@ -1624,6 +1624,10 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						nil,
 					)
 				} else {
+					if s.lazyRetrievalMaxBufferedResponses < 1 {
+						// Unit tests hit this path. Using 1 to test corner cases.
+						s.lazyRetrievalMaxBufferedResponses = 1
+					}
 					resp = newLazyRespSet(
 						span,
 						10*time.Minute,

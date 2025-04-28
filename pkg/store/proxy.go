@@ -93,14 +93,14 @@ type ProxyStore struct {
 	selectorLabels labels.Labels
 	buffers        sync.Pool
 
-	responseTimeout         time.Duration
-	metrics                 *proxyStoreMetrics
-	retrievalStrategy       RetrievalStrategy
-	debugLogging            bool
-	tsdbSelector            *TSDBSelector
-	quorumChunkDedup        bool
-	enableDedup             bool
-	matcherConverter        *storepb.MatcherConverter
+	responseTimeout                   time.Duration
+	metrics                           *proxyStoreMetrics
+	retrievalStrategy                 RetrievalStrategy
+	debugLogging                      bool
+	tsdbSelector                      *TSDBSelector
+	quorumChunkDedup                  bool
+	enableDedup                       bool
+	matcherConverter                  *storepb.MatcherConverter
 	lazyRetrievalMaxBufferedResponses int
 }
 
