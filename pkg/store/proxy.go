@@ -101,7 +101,7 @@ type ProxyStore struct {
 	quorumChunkDedup        bool
 	enableDedup             bool
 	matcherConverter        *storepb.MatcherConverter
-	lazyRetrievalBufferSize int
+	lazyRetrievalMaxBufferedResponses int
 }
 
 type proxyStoreMetrics struct {
@@ -138,9 +138,9 @@ func RegisterStoreServer(storeSrv storepb.StoreServer, logger log.Logger) func(*
 // BucketStoreOption are functions that configure BucketStore.
 type ProxyStoreOption func(s *ProxyStore)
 
-func WithLazyRetrievalBufferSize(buferSize int) ProxyStoreOption {
+func WithLazyRetrievalMaxBufferedResponsesForProxy(buferSize int) ProxyStoreOption {
 	return func(s *ProxyStore) {
-		s.lazyRetrievalBufferSize = buferSize
+		s.lazyRetrievalMaxBufferedResponses = buferSize
 	}
 }
 
@@ -392,16 +392,16 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 	defer logGroupReplicaErrors()
-	lazyRetrievalBufferSize := s.lazyRetrievalBufferSize
-	if lazyRetrievalBufferSize <= 0 {
+	lazyRetrievalMaxBufferedResponses := s.lazyRetrievalMaxBufferedResponses
+	if lazyRetrievalMaxBufferedResponses <= 0 {
 		// Use 1 as default value for lazy retrieval buffer size.
 		// Unit tests hit this path so that corner cases can be tested with buffer size 1.
-		lazyRetrievalBufferSize = 1
+		lazyRetrievalMaxBufferedResponses = 1
 	}
 	for _, st := range stores {
 		st := st
 
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, lazyRetrievalBufferSize)
+		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, lazyRetrievalMaxBufferedResponses)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()

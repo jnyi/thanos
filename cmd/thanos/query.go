@@ -247,7 +247,7 @@ func registerQuery(app *extkingpin.App) {
 
 	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for __rollup__ label for aggregated metrics. If set to x, all queries on aggregated metrics will have a __rollup__=x matcher. Leave empty to disable this behavior. Default is empty.").Default("").String()
 
-	lazyRetrievalBufferSize := cmd.Flag("query.lazy-retrieval-buffer-size", "The fixed buffer size (in terms of how many store responses) for lazy retrieval strategy. This is to limit the memory usage.").
+	lazyRetrievalMaxBufferedResponses := cmd.Flag("query.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
 		Default("20").Int()
 
 	var storeRateLimits store.SeriesSelectLimits
@@ -390,7 +390,7 @@ func registerQuery(app *extkingpin.App) {
 			*tenantLabel,
 			*enableGroupReplicaPartialStrategy,
 			*rewriteAggregationLabelTo,
-			*lazyRetrievalBufferSize,
+			*lazyRetrievalMaxBufferedResponses,
 		)
 	})
 }
@@ -476,7 +476,7 @@ func runQuery(
 	tenantLabel string,
 	groupReplicaPartialResponseStrategy bool,
 	rewriteAggregationLabelTo string,
-	lazyRetrievalBufferSize int,
+	lazyRetrievalMaxBufferedResponses int,
 ) error {
 	comp := component.Query
 	if alertQueryURL == "" {
@@ -564,7 +564,7 @@ func runQuery(
 		store.WithTSDBSelector(tsdbSelector),
 		store.WithProxyStoreDebugLogging(debugLogging),
 		store.WithQuorumChunkDedup(queryDeduplicationFunc == dedup.AlgorithmQuorum),
-		store.WithLazyRetrievalBufferSize(lazyRetrievalBufferSize),
+		store.WithLazyRetrievalMaxBufferedResponsesForProxy(lazyRetrievalMaxBufferedResponses),
 	}
 
 	// Parse and sanitize the provided replica labels flags.
