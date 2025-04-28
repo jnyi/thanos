@@ -1624,9 +1624,10 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						nil,
 					)
 				} else {
-					if s.lazyRetrievalMaxBufferedResponses < 1 {
-						// Unit tests hit this path. Using 1 to test corner cases.
-						s.lazyRetrievalMaxBufferedResponses = 1
+					lazyRetrievalMaxBufferedResponses := s.lazyRetrievalMaxBufferedResponses
+					if lazyRetrievalMaxBufferedResponses < 1 {
+						// Some unit and e2e tests hit this path.
+						lazyRetrievalMaxBufferedResponses = 1
 					}
 					resp = newLazyRespSet(
 						span,
@@ -1638,7 +1639,7 @@ func (s *BucketStore) Series(req *storepb.SeriesRequest, seriesSrv storepb.Store
 						shardMatcher,
 						false,
 						s.metrics.emptyPostingCount.WithLabelValues(tenant),
-						s.lazyRetrievalMaxBufferedResponses,
+						lazyRetrievalMaxBufferedResponses,
 					)
 				}
 

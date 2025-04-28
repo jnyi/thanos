@@ -392,16 +392,10 @@ func (s *ProxyStore) Series(originalRequest *storepb.SeriesRequest, srv storepb.
 		}
 	}
 	defer logGroupReplicaErrors()
-	lazyRetrievalMaxBufferedResponses := s.lazyRetrievalMaxBufferedResponses
-	if lazyRetrievalMaxBufferedResponses <= 0 {
-		// Use 1 as default value for lazy retrieval buffer size.
-		// Unit tests hit this path so that corner cases can be tested with buffer size 1.
-		lazyRetrievalMaxBufferedResponses = 1
-	}
 	for _, st := range stores {
 		st := st
 
-		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, lazyRetrievalMaxBufferedResponses)
+		respSet, err := newAsyncRespSet(ctx, st, r, s.responseTimeout, s.retrievalStrategy, &s.buffers, r.ShardInfo, reqLogger, s.metrics.emptyStreamResponses, s.lazyRetrievalMaxBufferedResponses)
 		if err != nil {
 			level.Warn(s.logger).Log("msg", "Store failure", "group", st.GroupKey(), "replica", st.ReplicaKey(), "err", err)
 			s.metrics.storeFailureCount.WithLabelValues(st.GroupKey(), st.ReplicaKey()).Inc()

@@ -515,7 +515,7 @@ func newAsyncRespSet(
 	shardInfo *storepb.ShardInfo,
 	logger log.Logger,
 	emptyStreamResponses prometheus.Counter,
-	fixedBufferSizeForLazyRetrieval int,
+	lazyRetrievalMaxBufferedResponses int,
 ) (respSet, error) {
 
 	var (
@@ -567,6 +567,11 @@ func newAsyncRespSet(
 	switch retrievalStrategy {
 	case LazyRetrieval:
 		span.SetTag("retrival_strategy", LazyRetrieval)
+		if lazyRetrievalMaxBufferedResponses < 1 {
+			// Some unit and e2e tests hit this path.
+			lazyRetrievalMaxBufferedResponses = 1
+		}
+
 		return newLazyRespSet(
 			span,
 			frameTimeout,
@@ -577,7 +582,7 @@ func newAsyncRespSet(
 			shardMatcher,
 			applySharding,
 			emptyStreamResponses,
-			fixedBufferSizeForLazyRetrieval,
+			lazyRetrievalMaxBufferedResponses,
 		), nil
 	case EagerRetrieval:
 		span.SetTag("retrival_strategy", EagerRetrieval)
