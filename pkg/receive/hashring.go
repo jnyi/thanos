@@ -222,7 +222,6 @@ func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
 }
 
 func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFactor uint64) (*ketamaHashring, error) {
-	fmt.Println("newAlignedKetamaHashring, endpoints:", endpoints)
 	groupedEndpoints, err := groupByAZ(endpoints)
 	if err != nil {
 		return nil, err
@@ -230,7 +229,6 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 	if len(groupedEndpoints) != int(replicationFactor) {
 		return nil, errors.Errorf("number of AZs (%d) must be equal to replication factor (%d)", len(groupedEndpoints), replicationFactor)
 	}
-
 	numAZs, numEndpointsPerAZ := len(groupedEndpoints), len(groupedEndpoints[0])
 	flattenEndpoints := make([]Endpoint, 0, numAZs*numEndpointsPerAZ)
 	for i := range numAZs {
@@ -238,11 +236,9 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 			flattenEndpoints = append(flattenEndpoints, groupedEndpoints[i][j])
 		}
 	}
-	fmt.Println("flattenEndpoints:", flattenEndpoints)
 
 	hash := xxhash.New()
 	ringSections := make(sections, 0, numEndpointsPerAZ)
-
 	for endpointIndex, endpoint := range groupedEndpoints[0] {
 		for i := 1; i <= sectionsPerNode; i++ {
 			_, _ = hash.Write([]byte(endpoint.Address + ":" + strconv.Itoa(i)))
@@ -252,15 +248,25 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 				hash:          hash.Sum64(),
 				replicas:      make([]uint64, 0, replicationFactor),
 			}
+			o := -1
 			for j := range numAZs {
-				n.replicas = append(n.replicas, uint64(numEndpointsPerAZ*j+endpointIndex))
+				replicaIdx := numEndpointsPerAZ*j + endpointIndex
+				n.replicas = append(n.replicas, uint64(replicaIdx))
+				order, err := strutil.ExtractPodOrdinal(flattenEndpoints[replicaIdx].Address)
+				if err != nil {
+					return nil, err
+				}
+				if j == o {
+					o = order
+				} else if order != o {
+					return nil, errors.Errorf("replicas %d and %d have different ordinal numbers in AZ %s", order, o, flattenEndpoints[replicaIdx].AZ)
+				}
 			}
 			ringSections = append(ringSections, n)
 			hash.Reset()
 		}
 	}
 	sort.Sort(ringSections)
-
 	return &ketamaHashring{
 		endpoints:    flattenEndpoints,
 		sections:     ringSections,
