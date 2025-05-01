@@ -13,6 +13,7 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/thanos/pkg/strutil"
 
 	"github.com/prometheus/prometheus/model/labels"
 
@@ -508,19 +509,89 @@ func TestAlignedKetamaHashringGet(t *testing.T) {
 				tc.ts = &prompb.TimeSeries{Labels: []labelpb.ZLabel{{Name: "dummy", Value: "dummy"}}}
 			}
 
-			result, getN_err := hashRing.GetN(tc.tenant, tc.ts, tc.n)
+			result, getNErr := hashRing.GetN(tc.tenant, tc.ts, tc.n)
 
 			if tc.expectGetNError {
-				require.Error(t, getN_err, "Expected GetN error")
+				require.Error(t, getNErr, "Expected GetN error")
 				if tc.getNErrorContains != "" {
-					require.Contains(t, getN_err.Error(), tc.getNErrorContains, "GetN error message mismatch")
+					require.Contains(t, getNErr.Error(), tc.getNErrorContains, "GetN error message mismatch")
 				}
 			} else {
-				require.NoError(t, getN_err, "Expected GetN to succeed")
+				require.NoError(t, getNErr, "Expected GetN to succeed")
 				// Use Equals for struct comparison
 				testutil.Equals(t, tc.expectedEndpoint, result, "GetN returned unexpected endpoint")
 			}
 		})
+	}
+}
+
+func TestAlignedKetamaHashringReplicaOrdinals(t *testing.T) {
+	t.Parallel()
+
+	// --- Test Setup ---
+	// Create a valid setup for aligned ketama
+	endpoints := []Endpoint{
+		// AZ A
+		{Address: podDNS("pod", 0, "svc", "nsa"), AZ: "zone-a"},
+		{Address: podDNS("pod", 1, "svc", "nsa"), AZ: "zone-a"},
+		{Address: podDNS("pod", 2, "svc", "nsa"), AZ: "zone-a"},
+		// AZ B
+		{Address: podDNS("pod", 0, "svc", "nsb"), AZ: "zone-b"},
+		{Address: podDNS("pod", 1, "svc", "nsb"), AZ: "zone-b"},
+		{Address: podDNS("pod", 2, "svc", "nsb"), AZ: "zone-b"},
+		// AZ C
+		{Address: podDNS("pod", 0, "svc", "nsc"), AZ: "zone-c"},
+		{Address: podDNS("pod", 1, "svc", "nsc"), AZ: "zone-c"},
+		{Address: podDNS("pod", 2, "svc", "nsc"), AZ: "zone-c"},
+	}
+	replicationFactor := uint64(3) // Must match number of AZs
+	sectionsPerNode := 10          // Use a smaller number for faster testing
+
+	// --- Create the Hashring ---
+	hashRing, err := newAlignedKetamaHashring(endpoints, sectionsPerNode, replicationFactor)
+	require.NoError(t, err, "Aligned hashring constructor failed")
+	require.NotNil(t, hashRing, "Hashring should not be nil")
+
+	// --- Verification Logic ---
+	require.NotEmpty(t, hashRing.sections, "Hashring should contain sections")
+
+	for i, s := range hashRing.sections {
+		// Skip if a section somehow has no replicas (shouldn't happen with RF > 0)
+		if len(s.replicas) == 0 {
+			continue
+		}
+
+		expectedOrdinal := -1 // Initialize with sentinel value
+
+		for replicaNum, replicaIndex := range s.replicas {
+			// Defensive check: Ensure replicaIndex is within bounds of the stored endpoints list
+			require.Less(t, int(replicaIndex), len(hashRing.endpoints),
+				"Section %d (hash %d), Replica %d: index %d out of bounds for endpoints list (len %d)",
+				i, s.hash, replicaNum, replicaIndex, len(hashRing.endpoints))
+
+			// Get the endpoint corresponding to the replica index
+			endpoint := hashRing.endpoints[replicaIndex]
+
+			// Extract the ordinal from the endpoint address
+			ordinal, err := strutil.ExtractPodOrdinal(endpoint.Address)
+			require.NoError(t, err,
+				"Section %d (hash %d), Replica %d: failed to extract ordinal from address %s",
+				i, s.hash, replicaNum, endpoint.Address)
+
+			if expectedOrdinal == -1 {
+				// This is the first replica for this section, store its ordinal
+				expectedOrdinal = ordinal
+			} else {
+				// Compare subsequent replica ordinals to the first one
+				require.Equal(t, expectedOrdinal, ordinal,
+					"Section %d (hash %d), Replica %d (%s): Mismatched ordinal. Expected %d, got %d. Replicas in section: %v",
+					i, s.hash, replicaNum, endpoint.Address, expectedOrdinal, ordinal, s.replicas)
+			}
+		}
+		// Optional: Check that we actually found an ordinal if replicas were present
+		if len(s.replicas) > 0 {
+			require.NotEqual(t, -1, expectedOrdinal, "Section %d (hash %d): Failed to determine expected ordinal for replicas %v", i, s.hash, s.replicas)
+		}
 	}
 }
 
