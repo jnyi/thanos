@@ -142,6 +142,7 @@ type ketamaHashring struct {
 }
 
 func newKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFactor uint64) (*ketamaHashring, error) {
+	fmt.Println("newKetamaHashring endpoints:", endpoints)
 	numSections := len(endpoints) * sectionsPerNode
 
 	if len(endpoints) < int(replicationFactor) {
