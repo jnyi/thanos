@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/cespare/xxhash"
+	"github.com/thanos-io/thanos/pkg/strutil"
 	"golang.org/x/exp/slices"
 
 	"github.com/go-kit/log"
@@ -21,7 +22,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/thanos-io/thanos/pkg/store/labelpb"
-
 	"github.com/thanos-io/thanos/pkg/store/storepb/prompb"
 )
 
@@ -29,8 +29,9 @@ import (
 type HashringAlgorithm string
 
 const (
-	AlgorithmHashmod HashringAlgorithm = "hashmod"
-	AlgorithmKetama  HashringAlgorithm = "ketama"
+	AlgorithmHashmod       HashringAlgorithm = "hashmod"
+	AlgorithmKetama        HashringAlgorithm = "ketama"
+	AlgorithmAlignedKetama HashringAlgorithm = "aligned_ketama"
 
 	// SectionsPerNode is the number of sections in the ring assigned to each node
 	// in the ketama hashring. A higher number yields a better series distribution,
@@ -142,7 +143,6 @@ type ketamaHashring struct {
 }
 
 func newKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFactor uint64) (*ketamaHashring, error) {
-	fmt.Println("newKetamaHashring endpoints:", endpoints)
 	numSections := len(endpoints) * sectionsPerNode
 
 	if len(endpoints) < int(replicationFactor) {
@@ -175,6 +175,96 @@ func newKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFac
 		endpoints:    endpoints,
 		sections:     ringSections,
 		numEndpoints: uint64(len(endpoints)),
+	}, nil
+}
+
+// groupByAZ groups the endpoints by their availability zone, and sorts them by their ordinal number in statefulset.
+// It finds the least common subset of enpoints in each AZ and returns them.
+func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
+	if len(endpoints) == 0 {
+		return nil, errors.New("no endpoints found")
+	}
+	azGroups := make(map[string]map[int]Endpoint)
+	for _, endpoint := range endpoints {
+		i, err := strutil.ExtractPodOrdinal(endpoint.Address)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to extract ordinal from address %s", endpoint.Address)
+		}
+		if _, ok := azGroups[endpoint.AZ]; !ok {
+			azGroups[endpoint.AZ] = make(map[int]Endpoint)
+		}
+		if _, ok := azGroups[endpoint.AZ][i]; ok {
+			return nil, errors.Errorf("duplicate endpoint %s in AZ %s", endpoint.Address, endpoint.AZ)
+		}
+		azGroups[endpoint.AZ][i] = endpoint
+	}
+	azSlice := make([]string, 0)
+	for az := range azGroups {
+		azSlice = append(azSlice, az)
+	}
+	sort.Strings(azSlice)
+	groupedEndpoints := make([][]Endpoint, len(azSlice))
+	i := 0
+	for {
+		for _, az := range azSlice {
+			if _, ok := azGroups[az][i]; !ok {
+				if i == 0 {
+					return nil, errors.Errorf("no endpoints found in AZ %s", az)
+				}
+				return groupedEndpoints, nil
+			}
+		}
+		for j, az := range azSlice {
+			groupedEndpoints[j] = append(groupedEndpoints[j], azGroups[az][i])
+		}
+		i++
+	}
+}
+
+func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFactor uint64) (*ketamaHashring, error) {
+	fmt.Println("newAlignedKetamaHashring, endpoints:", endpoints)
+	groupedEndpoints, err := groupByAZ(endpoints)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupedEndpoints) != int(replicationFactor) {
+		return nil, errors.Errorf("number of AZs (%d) must be equal to replication factor (%d)", len(groupedEndpoints), replicationFactor)
+	}
+
+	numAZs, numEndpointsPerAZ := len(groupedEndpoints), len(groupedEndpoints[0])
+	flattenEndpoints := make([]Endpoint, 0, numAZs*numEndpointsPerAZ)
+	for i := range numAZs {
+		for j := range numEndpointsPerAZ {
+			flattenEndpoints = append(flattenEndpoints, groupedEndpoints[i][j])
+		}
+	}
+	fmt.Println("flattenEndpoints:", flattenEndpoints)
+
+	hash := xxhash.New()
+	ringSections := make(sections, 0, numEndpointsPerAZ)
+
+	for endpointIndex, endpoint := range groupedEndpoints[0] {
+		for i := 1; i <= sectionsPerNode; i++ {
+			_, _ = hash.Write([]byte(endpoint.Address + ":" + strconv.Itoa(i)))
+			n := &section{
+				az:            endpoint.AZ,
+				endpointIndex: uint64(endpointIndex),
+				hash:          hash.Sum64(),
+				replicas:      make([]uint64, 0, replicationFactor),
+			}
+			for j := range numAZs {
+				n.replicas = append(n.replicas, uint64(numEndpointsPerAZ*j+endpointIndex))
+			}
+			ringSections = append(ringSections, n)
+			hash.Reset()
+		}
+	}
+	sort.Sort(ringSections)
+
+	return &ketamaHashring{
+		endpoints:    flattenEndpoints,
+		sections:     ringSections,
+		numEndpoints: uint64(len(flattenEndpoints)),
 	}, nil
 }
 
@@ -376,6 +466,8 @@ func newHashring(algorithm HashringAlgorithm, endpoints []Endpoint, replicationF
 		return newSimpleHashring(endpoints)
 	case AlgorithmKetama:
 		return newKetamaHashring(endpoints, SectionsPerNode, replicationFactor)
+	case AlgorithmAlignedKetama:
+		return newAlignedKetamaHashring(endpoints, SectionsPerNode, replicationFactor)
 	default:
 		l := log.NewNopLogger()
 		level.Warn(l).Log("msg", "Unrecognizable hashring algorithm. Fall back to hashmod algorithm.",
