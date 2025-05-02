@@ -194,11 +194,9 @@ func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to extract ordinal from address %s", ep.Address)
 		}
-
 		if _, ok := azEndpoints[ep.AZ]; !ok {
 			azEndpoints[ep.AZ] = make(map[int]Endpoint)
 		}
-
 		if _, exists := azEndpoints[ep.AZ][ordinal]; exists {
 			return nil, fmt.Errorf("duplicate endpoint ordinal %d for address %s in AZ %s", ordinal, ep.Address, ep.AZ)
 		}
@@ -225,17 +223,14 @@ func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
 				break
 			}
 		}
-
 		if !presentInAllAZs {
 			maxCommonOrdinal = i - 1
 			break
 		}
 	}
-
 	if maxCommonOrdinal < 0 {
 		return nil, errors.New("no common endpoints with ordinal 0 found across all AZs")
 	}
-
 	numAZs := len(sortedAZs)
 	result := make([][]Endpoint, numAZs)
 	for i, az := range sortedAZs {
@@ -284,16 +279,10 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 	// Iterate through primary endpoints (those in the first AZ) to define sections.
 	for primaryOrdinalIndex := 0; primaryOrdinalIndex < numEndpointsPerAZ; primaryOrdinalIndex++ {
 		primaryEndpoint := groupedEndpoints[0][primaryOrdinalIndex]
-		primaryOrdinal, err := strutil.ExtractPodOrdinal(primaryEndpoint.Address)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to extract ordinal from primary endpoint %s", primaryEndpoint.Address)
-		}
-
 		for sectionIndex := 1; sectionIndex <= sectionsPerNode; sectionIndex++ {
 			hasher.Reset()
 			_, _ = hasher.Write([]byte(primaryEndpoint.Address + ":" + strconv.Itoa(sectionIndex)))
 			sectionHash := hasher.Sum64()
-
 			sec := &section{
 				hash:          sectionHash,
 				az:            primaryEndpoint.AZ,
@@ -309,9 +298,9 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed to extract ordinal from replica endpoint %s in AZ %s", replicaEndpoint.Address, replicaEndpoint.AZ)
 				}
-				if replicaOrdinal != primaryOrdinal {
+				if replicaOrdinal != primaryOrdinalIndex {
 					return nil, fmt.Errorf("ordinal mismatch for primary endpoint %s (ordinal %d): replica %s in AZ %s has ordinal %d",
-						primaryEndpoint.Address, primaryOrdinal, replicaEndpoint.Address, replicaEndpoint.AZ, replicaOrdinal)
+						primaryEndpoint.Address, primaryOrdinalIndex, replicaEndpoint.Address, replicaEndpoint.AZ, replicaOrdinal)
 				}
 				sec.replicas = append(sec.replicas, uint64(replicaFlatIndex))
 			}
