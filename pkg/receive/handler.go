@@ -34,6 +34,7 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
+	"github.com/thanos-io/thanos/pkg/strutil"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/exp/slices"
@@ -863,6 +864,19 @@ func (h *Handler) fanoutForward(ctx context.Context, params remoteWriteParams) (
 	}
 }
 
+func allSame(slice []int) bool {
+	if len(slice) <= 1 {
+		return true // Empty or single-element slice is considered all same
+	}
+	first := slice[0]
+	for _, v := range slice {
+		if v != first {
+			return false
+		}
+	}
+	return true
+}
+
 // distributeTimeseriesToReplicas distributes the given timeseries from the tenant to different endpoints in a manner
 // that achieves the replication factor indicated by replicas.
 // The first return value are the series that should be written to the local node. The second return value are the
@@ -895,11 +909,17 @@ func (h *Handler) distributeTimeseriesToReplicas(
 			}
 		}
 
+		endpointOrders := make([]int, 0, len(replicas))
 		for _, rn := range replicas {
 			endpoint, err := h.hashring.GetN(tenant, &ts, rn)
 			if err != nil {
 				return nil, nil, err
 			}
+			o, err := strutil.ExtractPodOrdinal(endpoint.Address)
+			if err != nil {
+				panic(err)
+			}
+			endpointOrders = append(endpointOrders, o)
 			endpointReplica := endpointReplica{endpoint: endpoint, replica: rn}
 			var writeDestination = remoteWrites
 			if endpoint.HasAddress(h.options.Endpoint) {
@@ -920,6 +940,9 @@ func (h *Handler) distributeTimeseriesToReplicas(
 			tenantSeries.seriesIDs = append(tenantSeries.seriesIDs, tsIndex)
 
 			writeDestination[endpointReplica][tenant] = tenantSeries
+		}
+		if !allSame(endpointOrders) {
+			panic(fmt.Sprintf("endpoint orders are not the same, endpoint orders: %v", endpointOrders))
 		}
 	}
 	if h.receiverMode == RouterOnly && len(localWrites) > 0 {
