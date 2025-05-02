@@ -256,7 +256,7 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 				if err != nil {
 					return nil, err
 				}
-				if j == o {
+				if j == 0 {
 					o = order
 				} else if order != o {
 					return nil, errors.Errorf("replicas %d and %d have different ordinal numbers in AZ %s", order, o, flattenEndpoints[replicaIdx].AZ)
