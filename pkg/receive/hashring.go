@@ -178,7 +178,7 @@ func newKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFac
 	}, nil
 }
 
-// groupByAZ groups endpoints by Availability Zone and sorts them by their inferred ordinal.
+// groupByAZ groups endpoints by Availability Zone and sorts them by their inferred ordinal in a k8s statefulset.
 // It returns a 2D slice where each inner slice represents an AZ (sorted alphabetically)
 // and contains endpoints sorted by ordinal. All inner slices are truncated to the
 // length of the largest common sequence of ordinals starting from 0 across all AZs.
@@ -219,11 +219,10 @@ func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
 		for _, az := range sortedAZs {
 			if _, ok := azEndpoints[az][i]; !ok {
 				presentInAllAZs = false
-				// If even ordinal 0 is missing in any AZ, it's an invalid configuration for balancing.
 				if i == 0 {
 					return nil, fmt.Errorf("AZ %q is missing endpoint with ordinal 0", az)
 				}
-				break // Stop checking this ordinal once one AZ is missing it.
+				break
 			}
 		}
 
@@ -233,49 +232,25 @@ func groupByAZ(endpoints []Endpoint) ([][]Endpoint, error) {
 		}
 	}
 
-	// If maxCommonOrdinal is still -1, it means not even ordinal 0 was common.
 	if maxCommonOrdinal < 0 {
-		// This case should be caught by the i==0 check inside the loop,
-		// but added for robustness in case the logic changes.
 		return nil, errors.New("no common endpoints with ordinal 0 found across all AZs")
 	}
 
-	// Build the final result, truncated to the maxCommonOrdinal.
 	numAZs := len(sortedAZs)
 	result := make([][]Endpoint, numAZs)
 	for i, az := range sortedAZs {
-		// Pre-allocate slice capacity for efficiency.
 		result[i] = make([]Endpoint, 0, maxCommonOrdinal+1)
 		for j := 0; j <= maxCommonOrdinal; j++ {
-			// We know the endpoint exists due to the previous check.
 			result[i] = append(result[i], azEndpoints[az][j])
 		}
 	}
-
 	return result, nil
 }
 
 // newAlignedKetamaHashring creates a Ketama hash ring where replicas are strictly aligned across Availability Zones.
-//
-// It expects endpoints to be named following a pattern allowing ordinal extraction (e.g., pod-0, pod-1).
-// It first groups endpoints by AZ using groupByAZ, which ensures:
-//  1. AZs are sorted alphabetically.
-//  2. Endpoints within each AZ group are sorted by ordinal.
-//  3. All AZ groups are truncated to the same length (largest common sequence of ordinals starting from 0).
-//
-// The function requires the number of distinct AZs found to be exactly equal to the replicationFactor.
 // Each section on the hash ring corresponds to a primary endpoint (taken from the first AZ) and its
 // aligned replicas in other AZs (endpoints with the same ordinal). The hash for a section is calculated
 // based *only* on the primary endpoint's address.
-//
-// Parameters:
-//   - endpoints: A slice of all available endpoints.
-//   - sectionsPerNode: The number of sections (points) to add to the ring for each primary endpoint and its replicas.
-//   - replicationFactor: The desired number of replicas for each piece of data; must match the number of AZs.
-//
-// Returns:
-//   - A pointer to the initialized ketamaHashring.
-//   - An error if constraints are not met (e.g., AZ count != replicationFactor, missing ordinals, non-aligned ordinals).
 func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replicationFactor uint64) (*ketamaHashring, error) {
 	if replicationFactor == 0 {
 		return nil, errors.New("replication factor cannot be zero")
@@ -284,7 +259,6 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 		return nil, errors.New("sections per node must be positive")
 	}
 
-	// Group by AZ, sort AZs, sort endpoints by ordinal within AZs, and ensure common length.
 	groupedEndpoints, err := groupByAZ(endpoints)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to group endpoints by AZ")
@@ -292,21 +266,17 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 
 	numAZs := len(groupedEndpoints)
 	if numAZs == 0 {
-		// Should be caught by groupByAZ, but double-check.
 		return nil, errors.New("no endpoint groups found after grouping by AZ")
 	}
 	if uint64(numAZs) != replicationFactor {
 		return nil, fmt.Errorf("number of AZs (%d) must equal replication factor (%d)", numAZs, replicationFactor)
 	}
 
-	// groupedEndpoints[0] is safe because groupByAZ guarantees at least ordinal 0 exists if no error.
 	numEndpointsPerAZ := len(groupedEndpoints[0])
 	if numEndpointsPerAZ == 0 {
-		// Should be caught by groupByAZ, but double-check.
 		return nil, errors.New("AZ groups are empty after grouping")
 	}
 
-	// Create a flat list of endpoints, ordered AZ by AZ. This order is important for replica index calculation.
 	totalEndpoints := numAZs * numEndpointsPerAZ
 	flatEndpoints := make([]Endpoint, 0, totalEndpoints)
 	for azIndex := 0; azIndex < numAZs; azIndex++ {
@@ -319,16 +289,13 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 	// Iterate through primary endpoints (those in the first AZ) to define sections.
 	for primaryOrdinalIndex := 0; primaryOrdinalIndex < numEndpointsPerAZ; primaryOrdinalIndex++ {
 		primaryEndpoint := groupedEndpoints[0][primaryOrdinalIndex]
-		primaryOrdinal, err := strutil.ExtractPodOrdinal(primaryEndpoint.Address) // Get ordinal once for comparison.
+		primaryOrdinal, err := strutil.ExtractPodOrdinal(primaryEndpoint.Address)
 		if err != nil {
-			// Should not happen if groupByAZ worked, but check defensively.
 			return nil, errors.Wrapf(err, "failed to extract ordinal from primary endpoint %s", primaryEndpoint.Address)
 		}
 
-		// Create multiple sections per primary node for better distribution.
 		for sectionIndex := 1; sectionIndex <= sectionsPerNode; sectionIndex++ {
 			hasher.Reset()
-			// Hash is based *only* on the primary endpoint address and section index.
 			_, _ = hasher.Write([]byte(primaryEndpoint.Address + ":" + strconv.Itoa(sectionIndex)))
 			sectionHash := hasher.Sum64()
 
@@ -341,11 +308,8 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 
 			// Find indices of all replicas (including primary) in the flat list and verify alignment.
 			for azIndex := 0; azIndex < numAZs; azIndex++ {
-				// Calculate index in the flatEndpoints slice.
 				replicaFlatIndex := azIndex*numEndpointsPerAZ + primaryOrdinalIndex
 				replicaEndpoint := flatEndpoints[replicaFlatIndex]
-
-				// Verify that the replica in this AZ has the same ordinal as the primary.
 				replicaOrdinal, err := strutil.ExtractPodOrdinal(replicaEndpoint.Address)
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed to extract ordinal from replica endpoint %s in AZ %s", replicaEndpoint.Address, replicaEndpoint.AZ)
@@ -354,16 +318,12 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 					return nil, fmt.Errorf("ordinal mismatch for primary endpoint %s (ordinal %d): replica %s in AZ %s has ordinal %d",
 						primaryEndpoint.Address, primaryOrdinal, replicaEndpoint.Address, replicaEndpoint.AZ, replicaOrdinal)
 				}
-
 				sec.replicas = append(sec.replicas, uint64(replicaFlatIndex))
 			}
 			ringSections = append(ringSections, sec)
 		}
 	}
-
-	// Sort sections by hash value for ring lookup.
 	sort.Sort(ringSections)
-
 	return &ketamaHashring{
 		endpoints:    flatEndpoints,
 		sections:     ringSections,
