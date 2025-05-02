@@ -39,7 +39,7 @@ type StreamerConfig struct {
 	storeAddrPort        string
 	streamTimeoutSeconds int
 	replicaLabel         string
-	ignoreWarnings	   	 bool
+	ignoreWarnings       bool
 }
 
 func registerStreamer(app *extkingpin.App) {

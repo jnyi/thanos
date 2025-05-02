@@ -25,11 +25,11 @@ import (
 )
 
 type rawMetricConfig struct {
-	storeAddr  string
-	metric     string
-	hoursAgo   int
-	skipChunks bool
-	equalLabelMatcher string
+	storeAddr            string
+	metric               string
+	hoursAgo             int
+	skipChunks           bool
+	equalLabelMatcher    string
 	notEqualLabelMatcher string
 }
 
@@ -83,8 +83,8 @@ func streamMetric(conf *rawMetricConfig, logger log.Logger) error {
 			return
 		}
 		labelMatchers = append(labelMatchers, storepb.LabelMatcher{
-			Type: mtype,
-			Name: parts[0],
+			Type:  mtype,
+			Name:  parts[0],
 			Value: parts[1],
 		})
 	}
