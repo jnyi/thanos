@@ -258,12 +258,10 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 	if sectionsPerNode <= 0 {
 		return nil, errors.New("sections per node must be positive")
 	}
-
 	groupedEndpoints, err := groupByAZ(endpoints)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to group endpoints by AZ")
 	}
-
 	numAZs := len(groupedEndpoints)
 	if numAZs == 0 {
 		return nil, errors.New("no endpoint groups found after grouping by AZ")
@@ -271,20 +269,17 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 	if uint64(numAZs) != replicationFactor {
 		return nil, fmt.Errorf("number of AZs (%d) must equal replication factor (%d)", numAZs, replicationFactor)
 	}
-
 	numEndpointsPerAZ := len(groupedEndpoints[0])
 	if numEndpointsPerAZ == 0 {
 		return nil, errors.New("AZ groups are empty after grouping")
 	}
-
 	totalEndpoints := numAZs * numEndpointsPerAZ
 	flatEndpoints := make([]Endpoint, 0, totalEndpoints)
 	for azIndex := 0; azIndex < numAZs; azIndex++ {
 		flatEndpoints = append(flatEndpoints, groupedEndpoints[azIndex]...)
 	}
-
 	hasher := xxhash.New()
-	ringSections := make(sections, 0, numEndpointsPerAZ*sectionsPerNode) // Correct capacity.
+	ringSections := make(sections, 0, numEndpointsPerAZ*sectionsPerNode)
 
 	// Iterate through primary endpoints (those in the first AZ) to define sections.
 	for primaryOrdinalIndex := 0; primaryOrdinalIndex < numEndpointsPerAZ; primaryOrdinalIndex++ {
@@ -301,8 +296,8 @@ func newAlignedKetamaHashring(endpoints []Endpoint, sectionsPerNode int, replica
 
 			sec := &section{
 				hash:          sectionHash,
-				az:            primaryEndpoint.AZ,          // AZ of the primary.
-				endpointIndex: uint64(primaryOrdinalIndex), // Index within the AZ.
+				az:            primaryEndpoint.AZ,
+				endpointIndex: uint64(primaryOrdinalIndex),
 				replicas:      make([]uint64, 0, replicationFactor),
 			}
 
