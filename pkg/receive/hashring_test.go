@@ -416,7 +416,7 @@ func TestAlignedKetamaHashringGet(t *testing.T) {
 			replicationFactor:        1,
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
-			constructorErrorContains: "no endpoints found",
+			constructorErrorContains: "no endpoints provided",
 		},
 		"error: invalid address": {
 			inputEndpoints:           []Endpoint{ep0a, invalidEp, ep0b},
@@ -437,21 +437,21 @@ func TestAlignedKetamaHashringGet(t *testing.T) {
 			replicationFactor:        2,
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
-			constructorErrorContains: "no endpoints found in AZ", // Error from groupByAZ
+			constructorErrorContains: "failed to group endpoints by AZ: AZ \"zone-a\" is missing endpoint with ordinal 0", // Error from groupByAZ
 		},
 		"error: AZ count != RF (too few AZs)": {
 			inputEndpoints:           []Endpoint{ep0a, ep1a}, // Only 1 AZ
 			replicationFactor:        2,                      // Expecting 2
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
-			constructorErrorContains: "number of AZs (1) must be equal to replication factor (2)",
+			constructorErrorContains: "number of AZs (1) must equal replication factor (2)",
 		},
 		"error: AZ count != RF (too many AZs)": {
 			inputEndpoints:           []Endpoint{ep0a, ep1a, ep0b, ep1b, ep0c, ep1c}, // 3 AZs
 			replicationFactor:        2,                                              // Expecting 2
 			sectionsPerNode:          SectionsPerNode,
 			expectConstructorError:   true,
-			constructorErrorContains: "number of AZs (3) must be equal to replication factor (2)",
+			constructorErrorContains: "number of AZs (3) must equal replication factor (2)",
 		},
 		"constructor success with unbalanced AZs (uses common subset)": { // Renamed and corrected expectation
 			inputEndpoints:         []Endpoint{ep0a, ep1a, ep0b}, // zone-a has 0,1; zone-b has 0. Common subset is [[ep0a], [ep0b]]
