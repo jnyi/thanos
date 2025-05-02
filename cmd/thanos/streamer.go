@@ -264,13 +264,15 @@ func (s *Streamer) streamOneRequest(request *streamer.StreamerRequest, writer io
 			return writeResponse(&streamer.StreamerResponse{Err: err.Error()})
 		}
 		if warning := response.GetWarning(); warning != "" {
-			level.Error(s.logger).Log(
-				"warning", warning,
+			level.Warn(s.logger).Log(
 				"msg", "warning response from Store gRPC stream",
+				"warning", warning,
+				"ignore_warnings", s.config.ignoreWarnings,
 				"request_id", request.RequestId)
-			if !s.config.ignoreWarnings {
-				return writeResponse(&streamer.StreamerResponse{Err: fmt.Sprintf("warning response from Store gRPC stream: %s", warning)})
+			if s.config.ignoreWarnings {
+				continue
 			}
+			return writeResponse(&streamer.StreamerResponse{Err: fmt.Sprintf("warning response from Store gRPC stream: %s", warning)})
 		}
 		seriesResp := response.GetSeries()
 		if seriesResp == nil {
