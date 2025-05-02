@@ -62,7 +62,6 @@ import (
 	"github.com/thanos-io/thanos/pkg/tenancy"
 	"github.com/thanos-io/thanos/pkg/tls"
 	"github.com/thanos-io/thanos/pkg/ui"
-	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -506,9 +505,9 @@ func runQuery(
 		return errors.Wrap(err, "building gRPC client")
 	}
 	if grpcStoreClientKeepAlivePingInterval > 0 {
-		dialOpts = append(dialOpts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time: grpcStoreClientKeepAlivePingInterval,
-		}))
+		clientParameters := extgrpc.GetDefaultKeepaliveClientParameters()
+		clientParameters.Time = grpcStoreClientKeepAlivePingInterval
+		dialOpts = append(dialOpts, grpc.WithKeepaliveParams(clientParameters))
 	}
 	if grpcCompression != compressionNone {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(grpcCompression)))
