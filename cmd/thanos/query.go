@@ -248,6 +248,12 @@ func registerQuery(app *extkingpin.App) {
 	rewriteAggregationLabelStrategy := cmd.Flag("query.aggregation-label-strategy", "The strategy to use when rewriting aggregation labels. Used during aggregator migration only.").Default(string(query.NoopLabelRewriter)).Hidden().Enum(string(query.NoopLabelRewriter), string(query.UpsertLabelRewriter), string(query.InsertOnlyLabelRewriter))
 	rewriteAggregationLabelTo := cmd.Flag("query.aggregation-label-value-override", "The value override for aggregation label. If set to x, all queries on aggregated metrics will have a `__agg_rule_type__=x` matcher. If empty, this behavior is disabled. Default is empty.").Hidden().Default("").String()
 
+	lazyRetrievalMaxBufferedResponses := cmd.Flag("query.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
+		Default("20").Int()
+
+	grpcStoreClientKeepAlivePingInterval := extkingpin.ModelDuration(cmd.Flag("query.grcp-store-client-keep-alive-ping-interval", "This value defines how often a store client sends a keepalive ping on an established gRPC stream. 0 means not to set. NB: a client is keeping a long‐running gRPC stream open. It still has active RPCs on the wire—even if Recv() is not called in a while. Setting PermitWithoutStream=false only stops pings when no streams exist; it does not suppress pings during an open stream").
+		Default("0s"))
+
 	var storeRateLimits store.SeriesSelectLimits
 	storeRateLimits.RegisterFlags(cmd)
 
@@ -389,6 +395,8 @@ func registerQuery(app *extkingpin.App) {
 			*enableGroupReplicaPartialStrategy,
 			*rewriteAggregationLabelStrategy,
 			*rewriteAggregationLabelTo,
+			*lazyRetrievalMaxBufferedResponses,
+			time.Duration(*grpcStoreClientKeepAlivePingInterval),
 		)
 	})
 }
@@ -475,6 +483,8 @@ func runQuery(
 	groupReplicaPartialResponseStrategy bool,
 	rewriteAggregationLabelStrategy string,
 	rewriteAggregationLabelTo string,
+	lazyRetrievalMaxBufferedResponses int,
+	grpcStoreClientKeepAlivePingInterval time.Duration,
 ) error {
 	comp := component.Query
 	if alertQueryURL == "" {
@@ -493,6 +503,11 @@ func runQuery(
 	dialOpts, err := extgrpc.StoreClientGRPCOpts(logger, reg, tracer, secure, skipVerify, cert, key, caCert, serverName)
 	if err != nil {
 		return errors.Wrap(err, "building gRPC client")
+	}
+	if grpcStoreClientKeepAlivePingInterval > 0 {
+		clientParameters := extgrpc.GetDefaultKeepaliveClientParameters()
+		clientParameters.Time = grpcStoreClientKeepAlivePingInterval
+		dialOpts = append(dialOpts, grpc.WithKeepaliveParams(clientParameters))
 	}
 	if grpcCompression != compressionNone {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(grpcCompression)))
@@ -562,6 +577,7 @@ func runQuery(
 		store.WithTSDBSelector(tsdbSelector),
 		store.WithProxyStoreDebugLogging(debugLogging),
 		store.WithQuorumChunkDedup(queryDeduplicationFunc == dedup.AlgorithmQuorum),
+		store.WithLazyRetrievalMaxBufferedResponsesForProxy(lazyRetrievalMaxBufferedResponses),
 	}
 
 	// Parse and sanitize the provided replica labels flags.
