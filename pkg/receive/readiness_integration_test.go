@@ -7,15 +7,18 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/efficientgo/core/testutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/go-kit/log"
+	"github.com/opentracing/opentracing-go"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/prober"
 	grpcserver "github.com/thanos-io/thanos/pkg/server/grpc"
 	"github.com/thanos-io/thanos/pkg/store/storepb"
@@ -35,19 +38,13 @@ func (m *mockWriteableStoreServer) RemoteWrite(_ context.Context, _ *storepb.Wri
 // TestReadinessFeatureIntegration tests the full integration of the readiness feature
 // including feature flag parsing and gRPC server setup.
 func TestReadinessFeatureIntegration(t *testing.T) {
-	t.Run("feature flag parsing", func(t *testing.T) {
-		features := []string{"metric-names-filter", "grpc-readiness-interceptor"}
-
-		var enableReadiness bool
-		for _, feature := range features {
-			if feature == "grpc-readiness-interceptor" {
-				enableReadiness = true
-			}
-		}
-		testutil.Equals(t, true, enableReadiness)
+	t.Run("NewReadinessGRPCOptions creates correct options", func(t *testing.T) {
+		probe := prober.NewHTTP()
+		options := NewReadinessGRPCOptions(probe)
+		testutil.Equals(t, 2, len(options)) // Should have unary and stream interceptor options
 	})
 
-	t.Run("grpc server with readiness", func(t *testing.T) {
+	t.Run("grpc server with readiness - full behavior test", func(t *testing.T) {
 		testReadinessWithGRPCServer(t, true)
 	})
 
@@ -58,80 +55,81 @@ func TestReadinessFeatureIntegration(t *testing.T) {
 
 func testReadinessWithGRPCServer(t *testing.T, enableReadiness bool) {
 	httpProbe := prober.NewHTTP()
-
 	testutil.Equals(t, false, httpProbe.IsReady())
 
-	lis := bufconn.Listen(1024 * 1024)
-	defer lis.Close()
+	mockSrv := &mockWriteableStoreServer{}
 
-	grpcOptions := []grpcserver.Option{
-		grpcserver.WithListen("bufnet"),
+	// Test the actual NewReadinessGRPCOptions function
+	if enableReadiness {
+		readinessOptions := NewReadinessGRPCOptions(httpProbe)
+		testutil.Equals(t, 2, len(readinessOptions)) // Should have unary and stream interceptors
 	}
+
+	// Create grpcserver with actual production setup
+	logger := log.NewNopLogger()
+	reg := prometheus.NewRegistry()
+	tracer := opentracing.NoopTracer{}
+	comp := component.Receive
+	grpcProbe := prober.NewGRPC()
+
+	// Find a free port for testing
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	testutil.Ok(t, err)
+	addr := listener.Addr().String()
+	listener.Close()
+
+	var grpcOptions []grpcserver.Option
+	grpcOptions = append(grpcOptions, grpcserver.WithListen(addr))
+	grpcOptions = append(grpcOptions, grpcserver.WithServer(func(s *grpc.Server) {
+		storepb.RegisterWriteableStoreServer(s, mockSrv)
+	}))
+
 	if enableReadiness {
 		grpcOptions = append(grpcOptions, NewReadinessGRPCOptions(httpProbe)...)
 	}
 
-	mockSrv := &mockWriteableStoreServer{}
-	var serverOpts []grpc.ServerOption
+	srv := grpcserver.New(logger, reg, tracer, nil, nil, comp, grpcProbe, grpcOptions...)
 
-	if enableReadiness {
-		unaryInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-			if !httpProbe.IsReady() {
-				return nil, nil
-			}
-			return handler(ctx, req)
-		}
-
-		streamInterceptor := func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-			if !httpProbe.IsReady() {
-				return nil
-			}
-			return handler(srv, ss)
-		}
-
-		serverOpts = append(serverOpts,
-			grpc.UnaryInterceptor(unaryInterceptor),
-			grpc.StreamInterceptor(streamInterceptor),
-		)
-	}
-
-	s := grpc.NewServer(serverOpts...)
-	storepb.RegisterWriteableStoreServer(s, mockSrv)
-
+	// Start server in background
 	go func() {
-		if err := s.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+		if err := srv.ListenAndServe(); err != nil {
 			t.Errorf("Server failed: %v", err)
 		}
 	}()
-	defer s.Stop()
+	defer srv.Shutdown(nil)
 
-	conn, err := grpc.DialContext(context.Background(), "bufnet",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-			return lis.Dial()
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Wait for server to start
+	time.Sleep(200 * time.Millisecond)
+
+	// Create client connection
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	testutil.Ok(t, err)
 	defer conn.Close()
 
 	client := storepb.NewWriteableStoreClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	// Test 1: RemoteWrite when NOT ready
+	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel1()
 
-	resp, err := client.RemoteWrite(ctx, &storepb.WriteRequest{})
-	testutil.Ok(t, err)
+	resp1, err1 := client.RemoteWrite(ctx1, &storepb.WriteRequest{})
+	testutil.Ok(t, err1)
 
 	if enableReadiness {
-		testutil.Assert(t, resp != nil)
-		testutil.Equals(t, 0, mockSrv.callCount)
+		// When readiness is enabled and probe is not ready, interceptor returns empty response
+		testutil.Assert(t, resp1 != nil)
+		testutil.Equals(t, 0, mockSrv.callCount) // Service not called due to readiness interceptor
 	} else {
-		testutil.Assert(t, resp != nil)
+		// When readiness is disabled, service should be called normally
+		testutil.Assert(t, resp1 != nil)
 		testutil.Equals(t, 1, mockSrv.callCount)
 	}
 
+	// Make httpProbe ready
 	httpProbe.Ready()
 	testutil.Equals(t, true, httpProbe.IsReady())
 
+	// Test 2: RemoteWrite when ready
 	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
 	defer cancel2()
 
@@ -140,27 +138,30 @@ func testReadinessWithGRPCServer(t *testing.T, enableReadiness bool) {
 	testutil.Assert(t, resp2 != nil)
 
 	if enableReadiness {
+		// Now that probe is ready, service should be called
 		testutil.Equals(t, 1, mockSrv.callCount)
 	} else {
+		// Service called again (second time)
 		testutil.Equals(t, 2, mockSrv.callCount)
 	}
-}
 
-// TestConstantsAndFeatureList verifies the feature constants are properly defined.
-func TestConstantsAndFeatureList(t *testing.T) {
-	const (
-		expectedMetricNamesFilter = "metric-names-filter"
-		expectedGRPCReadiness     = "grpc-readiness-interceptor"
-	)
+	// Test 3: Make probe not ready again
+	httpProbe.NotReady(fmt.Errorf("test error"))
+	testutil.Equals(t, false, httpProbe.IsReady())
 
-	testutil.Assert(t, len(expectedMetricNamesFilter) > 0)
-	testutil.Assert(t, len(expectedGRPCReadiness) > 0)
-	testutil.Equals(t, false, strings.Contains(expectedMetricNamesFilter, " "))
-	testutil.Equals(t, false, strings.Contains(expectedGRPCReadiness, " "))
-	featureString := fmt.Sprintf("%s,%s", expectedMetricNamesFilter, expectedGRPCReadiness)
-	features := strings.Split(featureString, ",")
+	ctx3, cancel3 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel3()
 
-	testutil.Equals(t, 2, len(features))
-	testutil.Equals(t, expectedMetricNamesFilter, features[0])
-	testutil.Equals(t, expectedGRPCReadiness, features[1])
+	resp3, err3 := client.RemoteWrite(ctx3, &storepb.WriteRequest{})
+	testutil.Ok(t, err3)
+
+	if enableReadiness {
+		// Back to not ready - should not call service
+		testutil.Assert(t, resp3 != nil)
+		testutil.Equals(t, 1, mockSrv.callCount) // Count should not increase
+	} else {
+		// Service called again (third time)
+		testutil.Assert(t, resp3 != nil)
+		testutil.Equals(t, 3, mockSrv.callCount)
+	}
 }
