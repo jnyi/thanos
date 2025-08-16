@@ -479,7 +479,6 @@ func runReceive(
 			grpcserver.WithTLSConfig(tlsCfg),
 		}
 
-		// Add readiness interceptor if feature is enabled
 		if enableGRPCReadinessInterceptor {
 			grpcOptions = append(grpcOptions, receive.NewReadinessGRPCOptions(httpProbe)...)
 		}

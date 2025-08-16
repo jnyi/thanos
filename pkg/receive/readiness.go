@@ -23,8 +23,8 @@ type ReadinessChecker interface {
 func NewReadinessGRPCOptions(probe ReadinessChecker) []grpcserver.Option {
 	unaryInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
 		if !probe.IsReady() {
-			// Return empty response instead of processing the request
-			// This prevents timeouts while pods are starting up when using publishNotReadyAddresses: true
+			// Return empty response instead of processing the request.
+			// This prevents timeouts while pods are starting up when using publishNotReadyAddresses: true.
 			return nil, nil
 		}
 		return handler(ctx, req)
@@ -32,8 +32,8 @@ func NewReadinessGRPCOptions(probe ReadinessChecker) []grpcserver.Option {
 
 	streamInterceptor := func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if !probe.IsReady() {
-			// Return immediately instead of processing the request
-			// This prevents timeouts while pods are starting up when using publishNotReadyAddresses: true
+			// Return immediately instead of processing the request.
+			// This prevents timeouts while pods are starting up when using publishNotReadyAddresses: true.
 			return nil
 		}
 		return handler(srv, ss)
@@ -45,5 +45,5 @@ func NewReadinessGRPCOptions(probe ReadinessChecker) []grpcserver.Option {
 	}
 }
 
-// Ensure that HTTPProbe implements ReadinessChecker
+// Ensure that HTTPProbe implements ReadinessChecker.
 var _ ReadinessChecker = (*prober.HTTPProbe)(nil)
