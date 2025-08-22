@@ -91,8 +91,7 @@ func WithMatcherConverter(mc *storepb.MatcherConverter) MultiTSDBOption {
 // Supports exact matches (e.g., "tenant1") and prefix patterns (e.g., "prod-*" matches "prod-tenant1", "prod-tenant2").
 func WithNoUploadTenants(tenants []string) MultiTSDBOption {
 	return func(s *MultiTSDB) {
-		s.noUploadTenants = make([]string, len(tenants))
-		copy(s.noUploadTenants, tenants)
+		s.noUploadTenants = tenants
 	}
 }
 
@@ -771,7 +770,7 @@ func (t *MultiTSDB) startTSDB(logger log.Logger, tenantID string, tenant *tenant
 		return err
 	}
 	var ship *shipper.Shipper
-	if t.bucket != nil {
+	if t.bucket != nil && !t.isNoUploadTenant(tenantID) {
 		ship = shipper.New(
 			logger,
 			reg,
