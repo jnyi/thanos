@@ -1193,7 +1193,7 @@ func (rc *receiveConfig) registerFlag(cmd extkingpin.FlagClause) {
 	cmd.Flag("receive.max-pending-grcp-write-requests", "Reject right away gRPC write requests when this number of requests are pending. Value 0 disables this feature.").
 		Default("0").IntVar(&rc.maxPendingGrpcWriteRequests)
 	rc.featureList = cmd.Flag("enable-feature", "Experimental feature names to enable. The current list of features is "+metricNamesFilter+", "+grpcReadinessInterceptor+". Repeat this flag to enable multiple features.").Strings()
-	rc.noUploadTenants = cmd.Flag("receive.no-upload-tenants", "Tenant IDs that should only store data locally (no object store upload). Repeat this flag to specify multiple tenants.").Strings()
+	rc.noUploadTenants = cmd.Flag("receive.no-upload-tenants", "Tenant IDs/patterns that should only store data locally (no object store upload). Supports exact matches (e.g., 'tenant1') and prefix patterns (e.g., 'prod-*'). Repeat this flag to specify multiple patterns.").Strings()
 	cmd.Flag("receive.lazy-retrieval-max-buffered-responses", "The lazy retrieval strategy can buffer up to this number of responses. This is to limit the memory usage. This flag takes effect only when the lazy retrieval strategy is enabled.").
 		Default("20").IntVar(&rc.lazyRetrievalMaxBufferedResponses)
 }

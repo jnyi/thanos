@@ -67,7 +67,7 @@ type MultiTSDB struct {
 
 	metricNameFilterEnabled bool
 	matcherConverter        *storepb.MatcherConverter
-	noUploadTenants         map[string]struct{}
+	noUploadTenants         []string // Support both exact matches and prefix patterns (e.g., "tenant1", "prod-*")
 }
 
 // MultiTSDBOption is a functional option for MultiTSDB.
@@ -87,13 +87,12 @@ func WithMatcherConverter(mc *storepb.MatcherConverter) MultiTSDBOption {
 	}
 }
 
-// WithNoUploadTenants sets the list of tenant IDs that should not upload to object store (local storage only).
+// WithNoUploadTenants sets the list of tenant IDs/patterns that should not upload to object store (local storage only).
+// Supports exact matches (e.g., "tenant1") and prefix patterns (e.g., "prod-*" matches "prod-tenant1", "prod-tenant2").
 func WithNoUploadTenants(tenants []string) MultiTSDBOption {
 	return func(s *MultiTSDB) {
-		s.noUploadTenants = make(map[string]struct{}, len(tenants))
-		for _, tenant := range tenants {
-			s.noUploadTenants[tenant] = struct{}{}
-		}
+		s.noUploadTenants = make([]string, len(tenants))
+		copy(s.noUploadTenants, tenants)
 	}
 }
 
@@ -136,6 +135,29 @@ func NewMultiTSDB(
 	}
 
 	return mt
+}
+
+// isNoUploadTenant checks if a tenant matches any of the no-upload patterns.
+// Supports exact matches and prefix patterns (ending with '*').
+func (t *MultiTSDB) isNoUploadTenant(tenantID string) bool {
+	if t.noUploadTenants == nil {
+		return false
+	}
+
+	for _, pattern := range t.noUploadTenants {
+		if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
+			// Prefix match: compare tenant ID with pattern prefix (excluding '*')
+			if len(tenantID) >= len(pattern)-1 && tenantID[:len(pattern)-1] == pattern[:len(pattern)-1] {
+				return true
+			}
+		} else {
+			// Exact match
+			if pattern == tenantID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (t *MultiTSDB) GetTenants() []string {
@@ -607,13 +629,11 @@ func (t *MultiTSDB) Sync(ctx context.Context) (int, error) {
 
 	for tenantID, tenant := range t.tenants {
 		// Skip upload for tenants configured for local storage only
-		if t.noUploadTenants != nil {
-			if _, noUpload := t.noUploadTenants[tenantID]; noUpload {
-				level.Debug(t.logger).Log("msg", "skipping upload for local-only tenant", "tenant", tenantID)
-				continue
-			}
+		if t.isNoUploadTenant(tenantID) {
+			level.Debug(t.logger).Log("msg", "skipping upload for local-only tenant", "tenant", tenantID)
+			continue
 		}
-		
+
 		level.Debug(t.logger).Log("msg", "uploading block for tenant", "tenant", tenantID)
 		s := tenant.shipper()
 		if s == nil {

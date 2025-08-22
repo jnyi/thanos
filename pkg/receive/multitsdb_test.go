@@ -981,12 +981,13 @@ func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
 		bucket,
 		false,
 		metadata.NoneFunc,
-		WithNoUploadTenants([]string{"no-upload-tenant"}),
+		WithNoUploadTenants([]string{"no-upload-tenant", "blocked-*"}),
 	)
 	defer func() { testutil.Ok(t, m.Close()) }()
 
 	testutil.Ok(t, appendSample(m, "allowed-tenant", time.Now()))
 	testutil.Ok(t, appendSample(m, "no-upload-tenant", time.Now()))
+	testutil.Ok(t, appendSample(m, "blocked-prefix-tenant", time.Now()))
 	testutil.Ok(t, appendSample(m, "another-allowed-tenant", time.Now()))
 
 	testutil.Ok(t, m.Flush())
@@ -1002,7 +1003,7 @@ func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
 	uploaded, err := m.Sync(ctx)
 	testutil.Ok(t, err)
 
-	// Should have uploaded blocks from 2 allowed tenants
+	// Should have uploaded blocks from 2 allowed tenants (not the 2 no-upload ones)
 	testutil.Equals(t, 2, uploaded)
 
 	// Count objects after sync - should only see uploads from allowed tenants
@@ -1029,6 +1030,15 @@ func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
 			}
 		}
 	}
+
+	blockedPrefixTenantBlocks := 0
+	if files, err := os.ReadDir(path.Join(dir, "blocked-prefix-tenant")); err == nil {
+		for _, f := range files {
+			if f.IsDir() && f.Name() != "wal" && f.Name() != "chunks_head" {
+				blockedPrefixTenantBlocks++
+			}
+		}
+	}
 	if files, err := os.ReadDir(path.Join(dir, "allowed-tenant")); err == nil {
 		for _, f := range files {
 			if f.IsDir() && f.Name() != "wal" && f.Name() != "chunks_head" {
@@ -1044,11 +1054,62 @@ func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
 		}
 	}
 
-	// All tenants should have blocks locally
+	// All tenants should have blocks locally (including no-upload ones)
 	testutil.Assert(t, noUploadTenantBlocks > 0, "no upload tenant should have blocks locally")
+	testutil.Assert(t, blockedPrefixTenantBlocks > 0, "blocked prefix tenant should have blocks locally")
 	testutil.Assert(t, allowedTenantBlocks > 0, "allowed tenant should have blocks locally")
 	testutil.Assert(t, anotherAllowedTenantBlocks > 0, "another allowed tenant should have blocks locally")
 
-	// But only 2 uploads should have happened (not 3)
+	// But only 2 uploads should have happened (not 4) - exact match and prefix match should both be blocked
 	testutil.Equals(t, 2, len(objectsAfterSync))
+}
+
+func TestMultiTSDBNoUploadTenantsPrefix(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	bucket := objstore.NewInMemBucket()
+
+	// Test prefix matching functionality
+	m := NewMultiTSDB(dir, log.NewNopLogger(), prometheus.NewRegistry(),
+		&tsdb.Options{
+			MinBlockDuration:  (2 * time.Hour).Milliseconds(),
+			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
+			RetentionDuration: (6 * time.Hour).Milliseconds(),
+		},
+		labels.FromStrings("replica", "test"),
+		"tenant_id",
+		bucket,
+		false,
+		metadata.NoneFunc,
+		WithNoUploadTenants([]string{"prod-*", "staging-*", "exact-tenant"}),
+	)
+	defer func() { testutil.Ok(t, m.Close()) }()
+
+	// Test various tenant patterns
+	testutil.Ok(t, appendSample(m, "prod-tenant1", time.Now())) // Should match prod-*
+	testutil.Ok(t, appendSample(m, "prod-tenant2", time.Now())) // Should match prod-*
+	testutil.Ok(t, appendSample(m, "staging-app", time.Now()))  // Should match staging-*
+	testutil.Ok(t, appendSample(m, "exact-tenant", time.Now())) // Should match exact
+	testutil.Ok(t, appendSample(m, "dev-tenant", time.Now()))   // Should NOT match
+	testutil.Ok(t, appendSample(m, "production", time.Now()))   // Should NOT match (no * suffix)
+
+	testutil.Ok(t, m.Flush())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	uploaded, err := m.Sync(ctx)
+	testutil.Ok(t, err)
+
+	// Should have uploaded blocks from only 2 tenants (dev-tenant and production)
+	testutil.Equals(t, 2, uploaded)
+
+	// Test the prefix matching function directly
+	testutil.Assert(t, m.isNoUploadTenant("prod-tenant1"), "prod-tenant1 should match prod-*")
+	testutil.Assert(t, m.isNoUploadTenant("prod-anything"), "prod-anything should match prod-*")
+	testutil.Assert(t, m.isNoUploadTenant("staging-app"), "staging-app should match staging-*")
+	testutil.Assert(t, m.isNoUploadTenant("exact-tenant"), "exact-tenant should match exactly")
+	testutil.Assert(t, !m.isNoUploadTenant("dev-tenant"), "dev-tenant should NOT match any pattern")
+	testutil.Assert(t, !m.isNoUploadTenant("production"), "production should NOT match prod-* (no * suffix)")
+	testutil.Assert(t, !m.isNoUploadTenant("random"), "random should NOT match any pattern")
 }
