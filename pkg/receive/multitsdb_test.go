@@ -963,3 +963,92 @@ func TestMultiTSDBDoesNotDeleteNotUploadedBlocks(t *testing.T) {
 		}, tenant.blocksToDelete(nil))
 	})
 }
+
+func TestMultiTSDBBlockedTenantUploads(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	bucket := objstore.NewInMemBucket()
+
+	m := NewMultiTSDB(dir, log.NewNopLogger(), prometheus.NewRegistry(),
+		&tsdb.Options{
+			MinBlockDuration:  (2 * time.Hour).Milliseconds(),
+			MaxBlockDuration:  (2 * time.Hour).Milliseconds(),
+			RetentionDuration: (6 * time.Hour).Milliseconds(),
+		},
+		labels.FromStrings("replica", "test"),
+		"tenant_id",
+		bucket,
+		false,
+		metadata.NoneFunc,
+		WithNoUploadTenants([]string{"no-upload-tenant"}),
+	)
+	defer func() { testutil.Ok(t, m.Close()) }()
+
+	testutil.Ok(t, appendSample(m, "allowed-tenant", time.Now()))
+	testutil.Ok(t, appendSample(m, "no-upload-tenant", time.Now()))
+	testutil.Ok(t, appendSample(m, "another-allowed-tenant", time.Now()))
+
+	testutil.Ok(t, m.Flush())
+
+	var objectsBeforeSync int
+	testutil.Ok(t, bucket.Iter(context.Background(), "", func(s string) error {
+		objectsBeforeSync++
+		return nil
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	uploaded, err := m.Sync(ctx)
+	testutil.Ok(t, err)
+
+	// Should have uploaded blocks from 2 allowed tenants
+	testutil.Equals(t, 2, uploaded)
+
+	// Count objects after sync - should only see uploads from allowed tenants
+	var objectsAfterSync []string
+	testutil.Ok(t, bucket.Iter(context.Background(), "", func(s string) error {
+		objectsAfterSync = append(objectsAfterSync, s)
+		return nil
+	}))
+
+	// Since object names don't contain tenant info, we verify behavior by:
+	// 1. Checking upload count (should be 2, not 3)
+	// 2. Verifying that all tenants exist locally but only allowed ones uploaded
+
+	// Verify all tenants exist locally (blocks should be on disk for all)
+	noUploadTenantBlocks := 0
+	allowedTenantBlocks := 0
+	anotherAllowedTenantBlocks := 0
+
+	// Count blocks in local filesystem for each tenant
+	if files, err := os.ReadDir(path.Join(dir, "no-upload-tenant")); err == nil {
+		for _, f := range files {
+			if f.IsDir() && f.Name() != "wal" && f.Name() != "chunks_head" {
+				noUploadTenantBlocks++
+			}
+		}
+	}
+	if files, err := os.ReadDir(path.Join(dir, "allowed-tenant")); err == nil {
+		for _, f := range files {
+			if f.IsDir() && f.Name() != "wal" && f.Name() != "chunks_head" {
+				allowedTenantBlocks++
+			}
+		}
+	}
+	if files, err := os.ReadDir(path.Join(dir, "another-allowed-tenant")); err == nil {
+		for _, f := range files {
+			if f.IsDir() && f.Name() != "wal" && f.Name() != "chunks_head" {
+				anotherAllowedTenantBlocks++
+			}
+		}
+	}
+
+	// All tenants should have blocks locally
+	testutil.Assert(t, noUploadTenantBlocks > 0, "no upload tenant should have blocks locally")
+	testutil.Assert(t, allowedTenantBlocks > 0, "allowed tenant should have blocks locally")
+	testutil.Assert(t, anotherAllowedTenantBlocks > 0, "another allowed tenant should have blocks locally")
+
+	// But only 2 uploads should have happened (not 3)
+	testutil.Equals(t, 2, len(objectsAfterSync))
+}

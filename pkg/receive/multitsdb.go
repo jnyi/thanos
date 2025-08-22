@@ -67,6 +67,7 @@ type MultiTSDB struct {
 
 	metricNameFilterEnabled bool
 	matcherConverter        *storepb.MatcherConverter
+	noUploadTenants         map[string]struct{}
 }
 
 // MultiTSDBOption is a functional option for MultiTSDB.
@@ -83,6 +84,16 @@ func WithMetricNameFilterEnabled() MultiTSDBOption {
 func WithMatcherConverter(mc *storepb.MatcherConverter) MultiTSDBOption {
 	return func(s *MultiTSDB) {
 		s.matcherConverter = mc
+	}
+}
+
+// WithNoUploadTenants sets the list of tenant IDs that should not upload to object store (local storage only).
+func WithNoUploadTenants(tenants []string) MultiTSDBOption {
+	return func(s *MultiTSDB) {
+		s.noUploadTenants = make(map[string]struct{}, len(tenants))
+		for _, tenant := range tenants {
+			s.noUploadTenants[tenant] = struct{}{}
+		}
 	}
 }
 
@@ -595,6 +606,14 @@ func (t *MultiTSDB) Sync(ctx context.Context) (int, error) {
 	)
 
 	for tenantID, tenant := range t.tenants {
+		// Skip upload for tenants configured for local storage only
+		if t.noUploadTenants != nil {
+			if _, noUpload := t.noUploadTenants[tenantID]; noUpload {
+				level.Debug(t.logger).Log("msg", "skipping upload for local-only tenant", "tenant", tenantID)
+				continue
+			}
+		}
+		
 		level.Debug(t.logger).Log("msg", "uploading block for tenant", "tenant", tenantID)
 		s := tenant.shipper()
 		if s == nil {
