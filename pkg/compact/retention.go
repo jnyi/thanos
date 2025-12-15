@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-kit/log"
@@ -22,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/thanos-io/objstore"
+	"go.uber.org/atomic"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/thanos-io/thanos/pkg/block"
@@ -201,7 +201,7 @@ func ApplyFastRetentionByTenant(
 	}
 
 	startTime := time.Now()
-	var scanned, deleted, corrupt, skipped, errCount int64
+	var scanned, deleted, corrupt, skipped, errCount atomic.Int64
 
 	blockChan := make(chan ulid.ULID, concurrency*2)
 	eg, gCtx := errgroup.WithContext(ctx)
@@ -219,13 +219,13 @@ func ApplyFastRetentionByTenant(
 	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for id := range blockChan {
-				atomic.AddInt64(&scanned, 1)
+				scanned.Inc()
 
 				// Load meta from cache or bucket
 				meta, err := loadMetaFromCacheOrBucket(gCtx, logger, bkt, id, cacheDir)
 				if err != nil {
 					level.Error(logger).Log("msg", "failed to load meta", "id", id, "err", err)
-					atomic.AddInt64(&errCount, 1)
+					errCount.Inc()
 					continue
 				}
 
@@ -237,12 +237,12 @@ func ApplyFastRetentionByTenant(
 					if !dryRun {
 						if err := deleteBlockAndCache(gCtx, logger, bkt, id, cacheDir); err != nil {
 							level.Error(logger).Log("msg", "failed to delete corrupt block", "id", id, "err", err)
-							atomic.AddInt64(&errCount, 1)
+							errCount.Inc()
 							continue
 						}
 					}
 					blocksDeleted.Inc()
-					atomic.AddInt64(&corrupt, 1)
+					corrupt.Inc()
 					continue
 				}
 
@@ -252,14 +252,14 @@ func ApplyFastRetentionByTenant(
 					if hasWildcard {
 						policy = wildcardPolicy
 					} else {
-						atomic.AddInt64(&skipped, 1)
+						skipped.Inc()
 						continue
 					}
 				}
 
 				// Default behavior: only delete level 1 blocks unless IsAll is true
 				if !policy.IsAll && meta.Compaction.Level != Level1 {
-					atomic.AddInt64(&skipped, 1)
+					skipped.Inc()
 					continue
 				}
 
@@ -269,14 +269,14 @@ func ApplyFastRetentionByTenant(
 					if !dryRun {
 						if err := deleteBlockAndCache(gCtx, logger, bkt, id, cacheDir); err != nil {
 							level.Error(logger).Log("msg", "failed to delete block", "id", id, "err", err)
-							atomic.AddInt64(&errCount, 1)
+							errCount.Inc()
 							continue
 						}
 					}
 					blocksDeleted.Inc()
-					atomic.AddInt64(&deleted, 1)
+					deleted.Inc()
 				} else {
-					atomic.AddInt64(&skipped, 1)
+					skipped.Inc()
 				}
 			}
 			return nil
@@ -289,11 +289,11 @@ func ApplyFastRetentionByTenant(
 
 	level.Info(logger).Log(
 		"msg", "fast retention completed",
-		"scanned", scanned,
-		"deleted", deleted,
-		"corrupt", corrupt,
-		"skipped", skipped,
-		"errors", errCount,
+		"scanned", scanned.Load(),
+		"deleted", deleted.Load(),
+		"corrupt", corrupt.Load(),
+		"skipped", skipped.Load(),
+		"errors", errCount.Load(),
 		"duration", time.Since(startTime),
 		"dry_run", dryRun,
 	)
