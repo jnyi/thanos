@@ -813,6 +813,47 @@ func registerBucketDownsample(app extkingpin.AppClause, objStoreConfig *extflag.
 	})
 }
 
+// loadMetasFromCache loads block metadata from a local cache directory instead of syncing from bucket.
+// This reads meta.json files from <cacheDir>/<blockID>/meta.json and reuses the existing
+// loadMetaFromCacheOrBucket helper from retention.go.
+func loadMetasFromCache(ctx context.Context, logger log.Logger, bkt objstore.Bucket, sy *compact.Syncer, cacheDir string) error {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return errors.Wrapf(err, "failed to read cache directory %s. Please ensure the compactor's meta-syncer directory is accessible", cacheDir)
+	}
+
+	metas := make(map[ulid.ULID]*metadata.Meta)
+	partial := make(map[ulid.ULID]error)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Try to parse directory name as ULID
+		id, err := ulid.Parse(entry.Name())
+		if err != nil {
+			level.Debug(logger).Log("msg", "skipping non-ulid directory", "name", entry.Name())
+			continue
+		}
+
+		// Reuse existing helper function
+		meta, err := compact.LoadMetaFromCacheOrBucket(ctx, logger, bkt, id, cacheDir)
+		if err != nil {
+			level.Warn(logger).Log("msg", "failed to load meta", "block", id, "err", err)
+			partial[id] = err
+			continue
+		}
+
+		metas[id] = meta
+	}
+
+	level.Info(logger).Log("msg", "loaded metas from cache", "count", len(metas), "partial", len(partial))
+
+	// Store the metas in syncer (bypass the Fetch call that downloads from bucket)
+	return sy.SetMetas(metas, partial)
+}
+
 func registerBucketCleanup(app extkingpin.AppClause, objStoreConfig *extflag.PathOrContent) {
 	cmd := app.Command(component.Cleanup.String(), "Cleans up all blocks marked for deletion.")
 
@@ -888,12 +929,20 @@ func registerBucketCleanup(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 			}
 		}
 
-		level.Info(logger).Log("msg", "syncing blocks metadata")
-		if err := sy.SyncMetas(ctx); err != nil {
-			return errors.Wrap(err, "sync blocks")
+		// Load metadata from cache directory if available, otherwise sync from bucket
+		if tbc.cacheDir != "" {
+			level.Info(logger).Log("msg", "loading blocks metadata from cache", "cache_dir", tbc.cacheDir)
+			if err := loadMetasFromCache(ctx, logger, insBkt, sy, tbc.cacheDir); err != nil {
+				return errors.Wrap(err, "load metas from cache")
+			}
+			level.Info(logger).Log("msg", "loaded blocks from cache done")
+		} else {
+			level.Info(logger).Log("msg", "syncing blocks metadata from bucket")
+			if err := sy.SyncMetas(ctx); err != nil {
+				return errors.Wrap(err, "sync blocks")
+			}
+			level.Info(logger).Log("msg", "synced blocks done")
 		}
-
-		level.Info(logger).Log("msg", "synced blocks done")
 
 		compact.BestEffortCleanAbortedPartialUploads(ctx, logger, sy.Partial(), insBkt, stubCounter, stubCounter, stubCounter)
 		if err := blocksCleaner.DeleteMarkedBlocks(ctx); err != nil {
