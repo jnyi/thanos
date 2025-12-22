@@ -878,7 +878,10 @@ func registerBucketCleanup(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Cleanup.String(), nil)
-		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
+		if err != nil {
+			return err
+		}
+		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt)
 		if err != nil {
 			return err
 		}
@@ -1148,6 +1151,10 @@ func registerBucketMarkBlock(app extkingpin.AppClause, objStoreConfig *extflag.P
 		if err != nil {
 			return err
 		}
+		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
+		if err != nil {
+			return err
+		}
 		insBkt := objstoretracing.WrapWithTraces(objstore.WrapWithMetrics(bkt, extprom.WrapRegistererWithPrefix("thanos_", reg), bkt.Name()))
 
 		var ids []ulid.ULID
@@ -1175,7 +1182,7 @@ func registerBucketMarkBlock(app extkingpin.AppClause, objStoreConfig *extflag.P
 				}
 				switch tbc.marker {
 				case metadata.DeletionMarkFilename:
-					if err := block.MarkForDeletion(ctx, logger, insBkt, id, tbc.details, promauto.With(nil).NewCounter(prometheus.CounterOpts{})); err != nil {
+					if err := block.Delete(ctx, logger, insBkt, id); err != nil {
 						return errors.Wrapf(err, "mark %v for %v", id, tbc.marker)
 					}
 				case metadata.NoCompactMarkFilename:
@@ -1433,6 +1440,9 @@ func registerBucketRetention(app extkingpin.AppClause, objStoreConfig *extflag.P
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Retention.String(), nil)
+		if err != nil {
+			return err
+		}
 		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
 		if err != nil {
 			return err
@@ -1535,6 +1545,9 @@ func registerBucketFastRetention(app extkingpin.AppClause, objStoreConfig *extfl
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Retention.String(), nil)
+		if err != nil {
+			return err
+		}
 		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
 		if err != nil {
 			return err
