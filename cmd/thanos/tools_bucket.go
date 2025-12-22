@@ -145,6 +145,7 @@ type bucketCleanupConfig struct {
 	consistencyDelay     time.Duration
 	blockSyncConcurrency int
 	deleteDelay          time.Duration
+	cacheDir             string
 }
 
 type bucketRetentionConfig struct {
@@ -166,10 +167,9 @@ type bucketUploadBlocksConfig struct {
 }
 
 type bucketFastRetentionConfig struct {
-	cacheDir             string
-	concurrency          int
-	dryRun               bool
-	enableFolderDeletion bool
+	cacheDir    string
+	concurrency int
+	dryRun      bool
 }
 
 func (tbc *bucketVerifyConfig) registerBucketVerifyFlag(cmd extkingpin.FlagClause) *bucketVerifyConfig {
@@ -278,6 +278,8 @@ func (tbc *bucketCleanupConfig) registerBucketCleanupFlag(cmd extkingpin.FlagCla
 		Default("30m").DurationVar(&tbc.consistencyDelay)
 	cmd.Flag("block-sync-concurrency", "Number of goroutines to use when syncing block metadata from object storage.").
 		Default("20").IntVar(&tbc.blockSyncConcurrency)
+	cmd.Flag("cache-dir", "Local cache directory containing pre-synced meta.json files (typically compactor's meta-syncer dir).").
+		Default("/var/thanos/data/meta-syncer").StringVar(&tbc.cacheDir)
 	return tbc
 }
 
@@ -835,6 +837,7 @@ func registerBucketCleanup(app extkingpin.AppClause, objStoreConfig *extflag.Pat
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Cleanup.String(), nil)
+		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
 		if err != nil {
 			return err
 		}
@@ -1381,6 +1384,7 @@ func registerBucketRetention(app extkingpin.AppClause, objStoreConfig *extflag.P
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Retention.String(), nil)
+		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
 		if err != nil {
 			return err
 		}
@@ -1460,8 +1464,6 @@ func registerBucketFastRetention(app extkingpin.AppClause, objStoreConfig *extfl
 		Default("32").IntVar(&tbc.concurrency)
 	cmd.Flag("dry-run", "Log what would be deleted without actually deleting.").
 		Default("false").BoolVar(&tbc.dryRun)
-	cmd.Flag("enable-folder-deletion", "Support Azure Blob HNS folder deletion. This is a workaround for Azure Blob HNS folder deletion issue.").
-		Default("true").BoolVar(&tbc.enableFolderDeletion)
 	retentionTenants := cmd.Flag("retention.tenant",
 		"Per-tenant retention policy. Format: '<tenant>:<duration>d' or '<tenant>:<yyyy-mm-dd>'. "+
 			"Use '*' as tenant for wildcard policy. Blocks without tenant label are deleted as corrupt. "+
@@ -1484,10 +1486,7 @@ func registerBucketFastRetention(app extkingpin.AppClause, objStoreConfig *extfl
 		}
 
 		bkt, err := client.NewBucket(logger, confContentYaml, component.Retention.String(), nil)
-		if tbc.enableFolderDeletion {
-			bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt)
-			level.Info(logger).Log("msg", "azdatalake sdk wrapper enabled", "name", bkt.Name())
-		}
+		bkt, err = block.WrapWithAzDataLakeSdk(logger, confContentYaml, bkt) // always wrap with azure folder deletion sdk
 		if err != nil {
 			return err
 		}
